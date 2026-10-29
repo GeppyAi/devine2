@@ -1,10 +1,18 @@
+# Dependencies & Next.js build cache
 node_modules/
-.venv/
-venv/
-__pycache__/
-*.pyc
+.next/
+out/
+
+# Local environment secrets
 .env
-.DS_Store
-.tmp.driveupload/
-.geppy_baselines/
-.geppy_latest/
+.env.*
+!.env.example
+
+# Large source PSD
+Divine.psd
+
+# Keep Divine_Sixth_Sense_Studio_Standalone.html and version.json tracked
+# so recipients can click "Update from GitHub" inside the app!
+!Divine_Sixth_Sense_Studio_Standalone.html
+!Divine_Sixth_Sense_Studio_Email_Package.zip
+!version.json

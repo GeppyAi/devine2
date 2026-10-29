@@ -44,7 +44,13 @@ import {
   Globe,
   Paperclip,
   Trash2,
+  RefreshCw,
 } from 'lucide-react';
+
+const APP_CURRENT_VERSION = '1.1.0';
+const GITHUB_REPO_SLUG = 'GeppyAi/devine2';
+const GITHUB_REPO_URL = 'https://github.com/GeppyAi/devine2';
+const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/GeppyAi/devine2/main';
 
 interface UploadedSourceFile {
   id: string;
@@ -453,6 +459,161 @@ export default function DivineDashboard() {
     }
   };
 
+  // GitHub Auto-Update State & Handlers (https://github.com/GeppyAi/devine2)
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateApplying, setUpdateApplying] = useState(false);
+  const [remoteVersionInfo, setRemoteVersionInfo] = useState<{
+    version: string;
+    builtAt: string;
+    notes: string;
+    commitSha?: string;
+    hasNewerVersion: boolean;
+    statusMessage: string;
+  } | null>(null);
+
+  const checkForGitHubUpdates = async () => {
+    setShowUpdateModal(true);
+    setUpdateChecking(true);
+    try {
+      const cacheBust = Date.now();
+      const res = await fetch(`${GITHUB_RAW_BASE}/version.json?t=${cacheBust}`, {
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const remoteVer = String(data.version || APP_CURRENT_VERSION);
+        const isNewer = remoteVer !== APP_CURRENT_VERSION;
+        setRemoteVersionInfo({
+          version: remoteVer,
+          builtAt: data.builtAt || 'Latest Main Branch',
+          notes:
+            data.releaseNotes ||
+            'Latest Divine standalone build from github.com/GeppyAi/devine2.',
+          commitSha: data.commitSha,
+          hasNewerVersion: isNewer,
+          statusMessage: isNewer
+            ? `New version v${remoteVer} is available on GitHub!`
+            : `Connected to GitHub (${GITHUB_REPO_SLUG}). Latest version on main: v${remoteVer}.`,
+        });
+      } else {
+        // Fallback to GitHub Commits API if version.json is not yet pushed
+        const commitRes = await fetch(
+          `https://api.github.com/repos/${GITHUB_REPO_SLUG}/commits/main`
+        );
+        if (commitRes.ok) {
+          const commitData = await commitRes.json();
+          const shaShort = String(commitData.sha || '').slice(0, 7);
+          const commitDate = commitData.commit?.committer?.date
+            ? new Date(commitData.commit.committer.date).toLocaleString()
+            : 'Latest';
+          setRemoteVersionInfo({
+            version: `${APP_CURRENT_VERSION} (${shaShort})`,
+            builtAt: commitDate,
+            notes: commitData.commit?.message || 'Latest commit on GeppyAi/devine2 main branch.',
+            commitSha: shaShort,
+            hasNewerVersion: true,
+            statusMessage: `Connected to ${GITHUB_REPO_SLUG} (Commit ${shaShort}). Ready to pull latest standalone build.`,
+          });
+        } else {
+          setRemoteVersionInfo({
+            version: APP_CURRENT_VERSION,
+            builtAt: 'Pending First Push to main',
+            notes:
+              'Repository https://github.com/GeppyAi/devine2 is configured. Once the latest commit is pushed to the main branch, clicking Update will automatically pull it.',
+            hasNewerVersion: false,
+            statusMessage:
+              'Configured for github.com/GeppyAi/devine2 (awaiting public main branch or version.json).',
+          });
+        }
+      }
+    } catch {
+      setRemoteVersionInfo({
+        version: APP_CURRENT_VERSION,
+        builtAt: 'Offline / Local Mode',
+        notes:
+          'Unable to reach github.com/GeppyAi/devine2 right now. Your local standalone app continues to work 100% offline.',
+        hasNewerVersion: false,
+        statusMessage: 'Currently offline or repository not reachable.',
+      });
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const hotLoadGitHubUpdate = async () => {
+    setUpdateApplying(true);
+    try {
+      const res = await fetch(
+        `${GITHUB_RAW_BASE}/Divine_Sixth_Sense_Studio_Standalone.html?t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) {
+        alert(
+          t(
+            'Could not fetch Divine_Sixth_Sense_Studio_Standalone.html from https://github.com/GeppyAi/devine2/tree/main yet. Make sure the latest build is pushed to the main branch.',
+            'Aún no se pudo descargar Divine_Sixth_Sense_Studio_Standalone.html desde https://github.com/GeppyAi/devine2/tree/main. Asegúrese de haber subido la última versión a la rama main.'
+          )
+        );
+        return;
+      }
+      const latestHtml = await res.text();
+      if (!latestHtml.includes('<!DOCTYPE html>')) {
+        throw new Error('Invalid HTML payload');
+      }
+      document.open();
+      document.write(latestHtml);
+      document.close();
+    } catch {
+      alert(
+        t(
+          'Unable to hot-load from GitHub right now. Please check your internet connection or repository visibility.',
+          'No se pudo cargar la actualización desde GitHub en este momento. Verifique su conexión o el repositorio.'
+        )
+      );
+    } finally {
+      setUpdateApplying(false);
+    }
+  };
+
+  const downloadGitHubUpdateFile = async () => {
+    setUpdateApplying(true);
+    try {
+      const res = await fetch(
+        `${GITHUB_RAW_BASE}/Divine_Sixth_Sense_Studio_Standalone.html?t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) {
+        alert(
+          t(
+            'Could not download Divine_Sixth_Sense_Studio_Standalone.html from github.com/GeppyAi/devine2 (branch: main). Please push the latest build to GitHub first.',
+            'No se pudo descargar Divine_Sixth_Sense_Studio_Standalone.html desde github.com/GeppyAi/devine2 (rama: main).'
+          )
+        );
+        return;
+      }
+      const latestHtml = await res.text();
+      const blob = new Blob([latestHtml], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Divine_Sixth_Sense_Studio_Standalone.html';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      alert(
+        t(
+          'Download failed. Check connection to https://github.com/GeppyAi/devine2.',
+          'Error al descargar. Verifique la conexión a https://github.com/GeppyAi/devine2.'
+        )
+      );
+    } finally {
+      setUpdateApplying(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#faf8f6] text-slate-900">
       {/* Hidden Global Multi-Format File Upload Input (PDF, CSV, XLSX, Images, Docs) */}
@@ -523,6 +684,22 @@ export default function DivineDashboard() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {/* GitHub Auto-Update Button (https://github.com/GeppyAi/devine2) */}
+            <button
+              onClick={checkForGitHubUpdates}
+              title={t(
+                'Check & pull the latest Divine app update from github.com/GeppyAi/devine2',
+                'Comprobar y descargar la última versión de Divine desde github.com/GeppyAi/devine2'
+              )}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border border-stone-300 bg-stone-900 text-white hover:bg-stone-800 transition shadow-sm"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${updateChecking ? 'animate-spin' : ''}`} />
+              <span>{t('Update from GitHub', 'Actualizar desde GitHub')}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                v{APP_CURRENT_VERSION}
+              </span>
+            </button>
+
             {/* Bilingual Language Switcher Button (English <-> Español) */}
             <button
               onClick={() => setLang((prev) => (prev === 'en' ? 'es' : 'en'))}
@@ -591,6 +768,114 @@ export default function DivineDashboard() {
           </div>
         </div>
       </header>
+
+      {/* GitHub Self-Contained Updater Modal (https://github.com/GeppyAi/devine2) */}
+      {showUpdateModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-stone-300 shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-stone-200 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
+                  <RefreshCw className={`w-4 h-4 text-amber-700 ${updateChecking ? 'animate-spin' : ''}`} />
+                  {t(
+                    'GitHub Self-Updater — GeppyAi/devine2',
+                    'Actualizador Automático desde GitHub — GeppyAi/devine2'
+                  )}
+                </h2>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  {t(
+                    'Pull the latest Divine standalone app directly from GitHub without needing a new email attachment.',
+                    'Descargue o cargue la última versión de Divine directamente desde GitHub sin necesidad de recibir otro correo.'
+                  )}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowUpdateModal(false)}
+                className="text-xs font-bold px-2.5 py-1 rounded-lg bg-stone-100 text-stone-700 hover:bg-stone-200"
+              >
+                {t('Close', 'Cerrar')}
+              </button>
+            </div>
+
+            <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-stone-500 font-medium">
+                  {t('Connected GitHub Repository:', 'Repositorio GitHub Conectado:')}
+                </span>
+                <a
+                  href={GITHUB_REPO_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono font-bold text-amber-800 underline"
+                >
+                  github.com/{GITHUB_REPO_SLUG}
+                </a>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-stone-500 font-medium">
+                  {t('Installed App Version:', 'Versión Instalada:')}
+                </span>
+                <span className="font-mono font-bold text-stone-900">v{APP_CURRENT_VERSION}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-stone-500 font-medium">
+                  {t('Latest GitHub Version (main):', 'Última Versión en GitHub (main):')}
+                </span>
+                <span className="font-mono font-bold text-emerald-700">
+                  {updateChecking
+                    ? t('Checking GitHub...', 'Consultando GitHub...')
+                    : remoteVersionInfo
+                    ? `v${remoteVersionInfo.version} (${remoteVersionInfo.builtAt})`
+                    : '—'}
+                </span>
+              </div>
+              {remoteVersionInfo && (
+                <div className="pt-2 border-t border-stone-200 space-y-1">
+                  <div className="font-bold text-stone-800">{remoteVersionInfo.statusMessage}</div>
+                  <div className="text-[11px] text-stone-600">{remoteVersionInfo.notes}</div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={updateApplying}
+                onClick={hotLoadGitHubUpdate}
+                className="px-4 py-2.5 rounded-xl bg-stone-900 text-white text-xs font-bold hover:bg-stone-800 flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${updateApplying ? 'animate-spin' : ''}`} />
+                {t('Hot-Load Latest Version Now', 'Cargar Última Versión Ahora')}
+              </button>
+              <button
+                type="button"
+                disabled={updateApplying}
+                onClick={downloadGitHubUpdateFile}
+                className="px-4 py-2.5 rounded-xl bg-amber-500 text-stone-950 text-xs font-bold hover:bg-amber-400 flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {t('Download Updated HTML File', 'Descargar Archivo HTML Actualizado')}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-stone-500 pt-1">
+              <span>
+                {t(
+                  'Read-only pull from github.com/GeppyAi/devine2 • Zero studio data ever leaves your computer.',
+                  'Descarga de solo lectura desde github.com/GeppyAi/devine2 • Ningún dato del estudio sale de su equipo.'
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={checkForGitHubUpdates}
+                className="underline font-semibold text-stone-700 hover:text-stone-900 shrink-0 ml-2"
+              >
+                {t('Re-check', 'Reintentar')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 space-y-6">

@@ -66,6 +66,7 @@ async function buildStandalone() {
     'Trash2',
     'CheckCircle2',
     'FileEdit',
+    'RefreshCw',
   ];
 
   const toKebab = (str) =>
@@ -261,16 +262,35 @@ async function buildStandalone() {
   const outHtmlPath = path.join(ROOT, 'Divine_Sixth_Sense_Studio_Standalone.html');
   fs.writeFileSync(outHtmlPath, standaloneHtml, 'utf8');
 
+  const versionData = {
+    version: '1.1.0',
+    repository: 'https://github.com/GeppyAi/devine2',
+    builtAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+    releaseNotes:
+      'Self-contained standalone build with GitHub Live Auto-Updater, PDF/CSV/File Upload, Bilingual EN/ES toggle, AI Chat Co-Pilot, and 6 Houzz Pro workflow guides.',
+  };
+  fs.writeFileSync(path.join(ROOT, 'version.json'), JSON.stringify(versionData, null, 2), 'utf8');
+  fs.writeFileSync(
+    path.join(ROOT, 'public', 'version.json'),
+    JSON.stringify(versionData, null, 2),
+    'utf8'
+  );
+
   const readmePath = path.join(ROOT, 'README_HOW_TO_OPEN.txt');
   const readmeText = `========================================================================
 DIVINE — AI OPERATIONS & PROCUREMENT ASSISTANT (SIXTH SENSE STUDIO)
-SELF-CONTAINED PORTABLE APPLICATION
+SELF-CONTAINED PORTABLE APPLICATION (v1.1.0)
 ========================================================================
 
 HOW TO USE THIS APP (NO INSTALLATION REQUIRED):
 1. Double-click "Divine_Sixth_Sense_Studio_Standalone.html".
 2. It will open immediately in your default web browser (Chrome, Edge, Safari, or Firefox).
 3. Works 100% offline and air-gapped on Windows, Mac, iPad, or Chromebook.
+
+ONE-CLICK UPDATES FROM GITHUB (NO NEED TO RE-EMAIL):
+- Click the "Update from GitHub (v1.1.0)" button in the top header bar of the app.
+- Connected to: https://github.com/GeppyAi/devine2
+- You can either click "Hot-Load Latest Version Now" to load the newest version immediately in your browser, or click "Download Updated HTML File" to save the latest standalone file to your computer.
 
 FEATURES INCLUDED:
 - Bilingual Interface: Switch between English (EN) and Español (ES) at the top right.

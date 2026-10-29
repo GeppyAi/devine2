@@ -1,12 +1,17 @@
 ========================================================================
 DIVINE — AI OPERATIONS & PROCUREMENT ASSISTANT (SIXTH SENSE STUDIO)
-SELF-CONTAINED PORTABLE APPLICATION
+SELF-CONTAINED PORTABLE APPLICATION (v1.1.0)
 ========================================================================
 
 HOW TO USE THIS APP (NO INSTALLATION REQUIRED):
 1. Double-click "Divine_Sixth_Sense_Studio_Standalone.html".
 2. It will open immediately in your default web browser (Chrome, Edge, Safari, or Firefox).
 3. Works 100% offline and air-gapped on Windows, Mac, iPad, or Chromebook.
+
+ONE-CLICK UPDATES FROM GITHUB (NO NEED TO RE-EMAIL):
+- Click the "Update from GitHub (v1.1.0)" button in the top header bar of the app.
+- Connected to: https://github.com/GeppyAi/devine2
+- You can either click "Hot-Load Latest Version Now" to load the newest version immediately in your browser, or click "Download Updated HTML File" to save the latest standalone file to your computer.
 
 FEATURES INCLUDED:
 - Bilingual Interface: Switch between English (EN) and Español (ES) at the top right.
