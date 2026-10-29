@@ -67,6 +67,10 @@ async function buildStandalone() {
     'CheckCircle2',
     'FileEdit',
     'RefreshCw',
+    'Bug',
+    'Lightbulb',
+    'MessageSquarePlus',
+    'X',
   ];
 
   const toKebab = (str) =>
@@ -192,6 +196,7 @@ async function buildStandalone() {
     transpileTsModule('@/data/mockData', 'src/data/mockData.ts'),
     transpileTsModule('@/data/houzzKnowledge', 'src/data/houzzKnowledge.ts'),
     transpileTsModule('@/components/StatusBadge', 'src/components/StatusBadge.tsx'),
+    transpileTsModule('@/components/FeedbackWidget', 'src/components/FeedbackWidget.tsx'),
     transpileTsModule('@/app/page', 'src/app/page.tsx'),
     `
       (function() {

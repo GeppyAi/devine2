@@ -1,6 +1,6 @@
 {
   "version": "1.1.0",
   "repository": "https://github.com/GeppyAi/devine2",
-  "builtAt": "2026-10-29 22:02 UTC",
+  "builtAt": "2026-10-29 22:39 UTC",
   "releaseNotes": "Self-contained standalone build with GitHub Live Auto-Updater, PDF/CSV/File Upload, Bilingual EN/ES toggle, AI Chat Co-Pilot, and 6 Houzz Pro workflow guides."
 }

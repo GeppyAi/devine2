@@ -244,3 +244,27 @@ export interface DraftCommunication {
   bodyText: string;
   verificationStatus: VerificationStatus;
 }
+
+export type FeedbackCategory = 'BUG' | 'FEATURE_REQUEST' | 'REDESIGN_UX' | 'GENERAL_NOTE';
+
+export type FeedbackPriority = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface RedesignFeedbackItem {
+  id: string;
+  category: FeedbackCategory;
+  priority: FeedbackPriority;
+  targetArea: string;
+  reporterName: string;
+  title: string;
+  description: string;
+  redesignSuggestion?: string;
+  createdAt: string;
+  verificationStatus: VerificationStatus;
+  reviewerVerifiedNote?: string;
+  gitbridgeBugId?: string;
+  gitbridgeStatus?: 'SYNCED' | 'AUTO_FIXED' | 'PENDING_LOCAL' | 'ERROR';
+  gitbridgeAutoFixSummary?: string;
+  gitbridgePatchedFile?: string;
+  gitbridgeRebuiltStandalone?: boolean;
+}
+

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   INITIAL_PROCUREMENT_ORDERS,
   INITIAL_PAYMENT_PACKETS,
@@ -21,6 +21,7 @@ import {
   VerificationStatus,
 } from '@/types/divine';
 import { StatusBadge } from '@/components/StatusBadge';
+import { FeedbackWidget } from '@/components/FeedbackWidget';
 import {
   ShieldAlert,
   FileSpreadsheet,
@@ -62,6 +63,68 @@ interface UploadedSourceFile {
   status: VerificationStatus;
 }
 
+const INITIAL_SAMPLE_UPLOADED_FILES: UploadedSourceFile[] = [
+  {
+    id: 'uf-sample-1',
+    name: 'Arteriors_Invoice_INV-99241.pdf',
+    sizeLabel: '248 KB',
+    docCategory: 'Vendor Invoice (PDF)',
+    uploadedAt: 'Oct 19, 10:14 AM',
+    extractedPreview:
+      'Extracted: SKU ART-88412-VB (Vintage Bronze), Qty 1, Unit $3,850, Freight $375, Total $4,225. Flagged SKU/Finish & +$175 Freight mismatch vs PO-SSS-2026-041.',
+    status: 'DISCREPANCY_FOUND',
+  },
+  {
+    id: 'uf-sample-2',
+    name: 'Sofia_Morales_Timesheet_Oct05-18.csv',
+    sizeLabel: '18 KB',
+    docCategory: 'W-2 Employee Timesheet (CSV)',
+    uploadedAt: 'Oct 19, 9:05 AM',
+    extractedPreview:
+      'Extracted: 10 daily entries (71.50 reg hrs, 2.50 OT hrs). Flagged missing clock-out on Oct 8 & 0-min break on Oct 14.',
+    status: 'DISCREPANCY_FOUND',
+  },
+];
+
+const INITIAL_SAMPLE_CHAT: { role: 'user' | 'divine'; statusBanner?: string; text: string }[] = [
+  {
+    role: 'divine',
+    statusBanner: 'STATUS: READY — STRICT AIR-GAP ACTIVE',
+    text: `Hello. I am Divine, your preparation and organization assistant for Sixth Sense Studio.\n\nToday's Priority Flags Requiring Your Review:\n1. PO-SSS-2026-041 (Arteriors Chandelier): Vendor Ack & Invoice list wrong SKU/Finish (Vintage Bronze instead of Antique Brass), +$175 unapproved freight, and Nov 9 ETA threatens the Nov 5 Castellanos install.\n2. PO-SSS-2026-038 (Atelier Entry Console): Delivered Oct 19 with cracked travertine top & 2 missing leveling feet. Coordinate Mafer for Oct 22 pickup. Final invoice INV-ABM-882 has a Zelle handle mismatch and missing COI + Lien Release.\n3. PO-SSS-2026-044 (Vanguard Sectional): Missing Order Acknowledgment (7 days overdue).\n4. Payroll Prep (Sofia Morales, Oct 5–18): Missing clock-out on Thu Oct 8 and 0-min break on 10-hr shift Wed Oct 14. Deadline is Oct 21 at 3:00 PM.`,
+  },
+];
+
+const CLEAN_WELCOME_CHAT: { role: 'user' | 'divine'; statusBanner?: string; text: string }[] = [
+  {
+    role: 'divine',
+    statusBanner: 'STATUS: FRESH WORKSPACE — STRICT AIR-GAP ACTIVE',
+    text: `Hello. I am Divine, your preparation and organization assistant for Sixth Sense Studio.\n\nThis workspace is clean and ready for your live project documents.\n\n• Click "Upload PDF / File" (or drag & drop) to ingest vendor quotes, purchase orders, acknowledgments, invoices, Houzz Pro CSV exports, or W-2 timesheets.\n• Ask me any question about Houzz Pro workflows (My Items, Selections Tracker, Create/Merge POs, Manage Vendors) or studio preparation tasks.`,
+  },
+];
+
+const EMPTY_PAYROLL_PERIOD: PayrollPrepPeriod = {
+  id: 'pay-period-clean',
+  employeeName: 'W-2 Employee (Upload Timesheet to Populate)',
+  employeeType: 'W-2 (Single Employee)',
+  payPeriodStart: '—',
+  payPeriodEnd: '—',
+  payrollDeadline: 'Pending Timesheet Upload',
+  sourceDocumentName: 'No timesheet uploaded yet',
+  entries: [],
+  totalRegularHours: 0,
+  totalOvertimeHours: 0,
+  flaggedGapsAndAnomalies: [],
+  verificationStatus: 'DRAFT',
+  keldiaChecklist: {
+    hoursVerifiedAgainstSource: false,
+    anomaliesResolvedByKeldia: false,
+    enteredInQuickBooksOnline: false,
+    personallyReviewedQbPreview: false,
+    melizaWrittenApprovalObtained: false,
+    submittedInQuickBooksAndSaved: false,
+  },
+};
+
 type ActiveTab =
   | 'overview'
   | 'procurement'
@@ -75,48 +138,126 @@ export default function DivineDashboard() {
   const t = (en: string, es: string) => (lang === 'es' ? es : en);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [orders, setOrders] = useState<ProcurementOrder[]>(INITIAL_PROCUREMENT_ORDERS);
+  const [quoteComparisons, setQuoteComparisons] = useState(INITIAL_QUOTE_COMPARISONS);
   const [paymentPackets, setPaymentPackets] = useState<PaymentPacket[]>(INITIAL_PAYMENT_PACKETS);
   const [payroll, setPayroll] = useState<PayrollPrepPeriod>(INITIAL_PAYROLL_PERIOD);
   const [drafts, setDrafts] = useState<DraftCommunication[]>(INITIAL_DRAFTS);
+  const [vendors, setVendors] = useState(INITIAL_VENDORS);
+  const [houzzMergeCandidates, setHouzzMergeCandidates] = useState(INITIAL_HOUZZ_MERGE_CANDIDATES);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Clean / Reset Workspace State
+  const [isCleanWorkspace, setIsCleanWorkspace] = useState<boolean>(false);
+  const [showResetBanner, setShowResetBanner] = useState<boolean>(false);
 
   // Ingestion / AI Chat state
   const [ingestText, setIngestText] = useState('');
   const [selectedDocCategory, setSelectedDocCategory] = useState<string>('Auto-Detect');
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedSourceFile[]>([
-    {
-      id: 'uf-sample-1',
-      name: 'Arteriors_Invoice_INV-99241.pdf',
-      sizeLabel: '248 KB',
-      docCategory: 'Vendor Invoice (PDF)',
-      uploadedAt: 'Oct 19, 10:14 AM',
-      extractedPreview:
-        'Extracted: SKU ART-88412-VB (Vintage Bronze), Qty 1, Unit $3,850, Freight $375, Total $4,225. Flagged SKU/Finish & +$175 Freight mismatch vs PO-SSS-2026-041.',
-      status: 'DISCREPANCY_FOUND',
-    },
-    {
-      id: 'uf-sample-2',
-      name: 'Sofia_Morales_Timesheet_Oct05-18.csv',
-      sizeLabel: '18 KB',
-      docCategory: 'W-2 Employee Timesheet (CSV)',
-      uploadedAt: 'Oct 19, 9:05 AM',
-      extractedPreview:
-        'Extracted: 10 daily entries (71.50 reg hrs, 2.50 OT hrs). Flagged missing clock-out on Oct 8 & 0-min break on Oct 14.',
-      status: 'DISCREPANCY_FOUND',
-    },
-  ]);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedSourceFile[]>(
+    INITIAL_SAMPLE_UPLOADED_FILES
+  );
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<
     { role: 'user' | 'divine'; statusBanner?: string; text: string }[]
-  >([
-    {
-      role: 'divine',
-      statusBanner: 'STATUS: READY — STRICT AIR-GAP ACTIVE',
-      text: `Hello. I am Divine, your preparation and organization assistant for Sixth Sense Studio.\n\nToday's Priority Flags Requiring Your Review:\n1. PO-SSS-2026-041 (Arteriors Chandelier): Vendor Ack & Invoice list wrong SKU/Finish (Vintage Bronze instead of Antique Brass), +$175 unapproved freight, and Nov 9 ETA threatens the Nov 5 Castellanos install.\n2. PO-SSS-2026-038 (Atelier Entry Console): Delivered Oct 19 with cracked travertine top & 2 missing leveling feet. Coordinate Mafer for Oct 22 pickup. Final invoice INV-ABM-882 has a Zelle handle mismatch and missing COI + Lien Release.\n3. PO-SSS-2026-044 (Vanguard Sectional): Missing Order Acknowledgment (7 days overdue).\n4. Payroll Prep (Sofia Morales, Oct 5–18): Missing clock-out on Thu Oct 8 and 0-min break on 10-hr shift Wed Oct 14. Deadline is Oct 21 at 3:00 PM.`,
-    },
-  ]);
+  >(INITIAL_SAMPLE_CHAT);
+
+  // Clear all test/demo data across every tab and the Feedback widget
+  const clearAllTestData = (showNotification = true) => {
+    setOrders([]);
+    setQuoteComparisons([]);
+    setPaymentPackets([]);
+    setPayroll(EMPTY_PAYROLL_PERIOD);
+    setDrafts([]);
+    setVendors([]);
+    setHouzzMergeCandidates([]);
+    setUploadedFiles([]);
+    setIngestText('');
+    setChatInput('');
+    setChatHistory(CLEAN_WELCOME_CHAT);
+    setIsCleanWorkspace(true);
+    if (showNotification) {
+      setShowResetBanner(true);
+    }
+    try {
+      window.localStorage.setItem('divine_workspace_clean_mode', 'clean');
+      window.localStorage.setItem('divine_redesign_feedback_v1', JSON.stringify([]));
+      window.dispatchEvent(new Event('divine-clear-all-data'));
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  // Restore the original demo dataset anytime for training/testing
+  const restoreSampleDemoData = () => {
+    setOrders(INITIAL_PROCUREMENT_ORDERS);
+    setQuoteComparisons(INITIAL_QUOTE_COMPARISONS);
+    setPaymentPackets(INITIAL_PAYMENT_PACKETS);
+    setPayroll(INITIAL_PAYROLL_PERIOD);
+    setDrafts(INITIAL_DRAFTS);
+    setVendors(INITIAL_VENDORS);
+    setHouzzMergeCandidates(INITIAL_HOUZZ_MERGE_CANDIDATES);
+    setUploadedFiles(INITIAL_SAMPLE_UPLOADED_FILES);
+    setChatHistory(INITIAL_SAMPLE_CHAT);
+    setIsCleanWorkspace(false);
+    setShowResetBanner(false);
+    try {
+      window.localStorage.setItem('divine_workspace_clean_mode', 'demo');
+      window.dispatchEvent(new Event('divine-restore-demo-data'));
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  // Export/Download a fresh standalone HTML file pre-configured to open with zero test data
+  const downloadFreshStandaloneHtml = () => {
+    clearAllTestData(true);
+    setTimeout(() => {
+      try {
+        const docClone = document.documentElement.cloneNode(true) as HTMLElement;
+        const headEl = docClone.querySelector('head');
+        if (headEl && !docClone.innerHTML.includes('__DIVINE_DEFAULT_CLEAN__')) {
+          const cleanScript = document.createElement('script');
+          cleanScript.textContent =
+            'window.__DIVINE_DEFAULT_CLEAN__ = true; try { localStorage.setItem("divine_workspace_clean_mode", "clean"); localStorage.setItem("divine_redesign_feedback_v1", "[]"); } catch(e) {}';
+          headEl.insertBefore(cleanScript, headEl.firstChild);
+        }
+        const serializedHtml = '<!DOCTYPE html>\n' + docClone.outerHTML;
+        const blob = new Blob([serializedHtml], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Divine_Sixth_Sense_Studio_Standalone.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch {
+        alert(
+          t(
+            'All test data has been cleared from this workspace.',
+            'Todos los datos de prueba han sido eliminados del espacio de trabajo.'
+          )
+        );
+      }
+    }, 80);
+  };
+
+  // On mount, check if Clean Mode was saved or baked into the standalone HTML
+  useEffect(() => {
+    try {
+      const savedMode = window.localStorage.getItem('divine_workspace_clean_mode');
+      const bakedClean = Boolean(
+        (window as unknown as { __DIVINE_DEFAULT_CLEAN__?: boolean }).__DIVINE_DEFAULT_CLEAN__
+      );
+      if (savedMode === 'clean' || (bakedClean && savedMode !== 'demo')) {
+        clearAllTestData(false);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
 
   const copyToClipboard = (id: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -318,7 +459,11 @@ export default function DivineDashboard() {
         {
           role: 'divine',
           statusBanner: 'STATUS: HOUZZ PRO WORKFLOW GUIDE — FOR HUMAN VERIFICATION',
-          text: `Here is the exact Houzz Pro workflow from your indexed Houzz Pro Knowledge Base:\n\n${formattedGuide}\n\nNote: Divine also detected 2 eligible Draft POs for Vanguard Custom Furniture on Coral Gables Residence (PO-SSS-2026-048 & PO-SSS-2026-049) that meet Houzz Pro's Merge criteria (Draft stage + Same Vendor + Same Project). See Tab "2. Houzz & Budgets" for the step-by-step merge packet.`,
+          text: `Here is the exact Houzz Pro workflow from your indexed Houzz Pro Knowledge Base:\n\n${formattedGuide}${
+            houzzMergeCandidates.length > 0
+              ? `\n\nNote: Divine also detected 2 eligible Draft POs for Vanguard Custom Furniture on Coral Gables Residence (PO-SSS-2026-048 & PO-SSS-2026-049) that meet Houzz Pro's Merge criteria (Draft stage + Same Vendor + Same Project). See Tab "2. Houzz & Budgets" for the step-by-step merge packet.`
+              : ''
+          }`,
         },
       ]);
       setChatInput('');
@@ -332,7 +477,10 @@ export default function DivineDashboard() {
       {
         role: 'divine',
         statusBanner: 'STATUS: DRAFT — NEEDS HUMAN VERIFICATION',
-        text: `I have prepared the requested draft analysis based on your current Sixth Sense Studio source records:\n\n• Open Discrepancies Flagged: 5 across 2 orders (Arteriors PO-SSS-2026-041 SKU/Finish/Freight/ETA; Atelier PO-SSS-2026-038 damaged stone top & missing COI/Lien Release).\n• Mafer Coordination Reminders: 3 active items (Oct 22 Atelier damaged slab swap; Nov 9 Arteriors chandelier receiving; TBD Vanguard warehouse transfer).\n• Pending Meliza Approvals: 2 Vendor Payment Packets ($4,225.00 each—currently flagged with discrepancies) and 1 W-2 Payroll Period (74.0 total raw hours with 2 flagged anomalies).\n\nReminder: Please check all values against original source PDFs before copying or taking action.`,
+        text:
+          orders.length === 0 && paymentPackets.length === 0 && uploadedFiles.length === 0
+            ? `Your workspace is currently fresh with 0 test records.\n\nTo have me prepare a 3-way procurement match, Houzz Pro tracker update, vendor payment approval packet, or W-2 hours summary:\n1. Click "Upload PDF / File" below to attach your source document (PDF, CSV, XLSX, or Image), or\n2. Paste the quote, PO, acknowledgment, invoice, or timesheet text in the Source Document panel on the right.`
+            : `I have prepared the requested draft analysis based on your current Sixth Sense Studio source records:\n\n• Open Orders Tracked: ${orders.length}\n• Uploaded Source Documents: ${uploadedFiles.length}\n• Pending Vendor Payment Packets: ${paymentPackets.length}\n• Draft Communications Queued: ${drafts.length}\n\nReminder: Please check all values against original source PDFs before copying or taking action.`,
       },
     ]);
     setChatInput('');
@@ -684,6 +832,49 @@ export default function DivineDashboard() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {/* One-Click Reset / Clear All Test Data Button */}
+            {!isCleanWorkspace ? (
+              <button
+                type="button"
+                onClick={() => clearAllTestData(true)}
+                title={t(
+                  'Clear all sample/test data across all tabs so you can send or start a fresh workspace',
+                  'Eliminar todos los datos de prueba en todas las pestañas para iniciar o enviar un espacio limpio'
+                )}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border border-red-300 bg-red-50 text-red-900 hover:bg-red-100 transition shadow-sm"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-700" />
+                <span>{t('Reset / Clear All Test Data', 'Reiniciar / Limpiar Datos de Prueba')}</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={downloadFreshStandaloneHtml}
+                  title={t(
+                    'Download a clean standalone HTML copy with all test data removed to send to your team',
+                    'Descargar copia HTML independiente limpia sin datos de prueba para enviar al equipo'
+                  )}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-emerald-400 bg-emerald-50 text-emerald-950 hover:bg-emerald-100 transition shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>{t('Download Fresh HTML to Send', 'Descargar HTML Limpio')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={restoreSampleDemoData}
+                  title={t(
+                    'Restore sample demo data for testing or training',
+                    'Restaurar datos de demostración para pruebas o entrenamiento'
+                  )}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border border-stone-300 bg-stone-100 text-stone-700 hover:bg-stone-200 transition"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-stone-600" />
+                  <span>{t('Load Demo Data', 'Cargar Demo')}</span>
+                </button>
+              </div>
+            )}
+
             {/* GitHub Auto-Update Button (https://github.com/GeppyAi/devine2) */}
             <button
               onClick={checkForGitHubUpdates}
@@ -879,6 +1070,54 @@ export default function DivineDashboard() {
 
       {/* Main Content Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 space-y-6">
+        {/* Fresh / Reset Confirmation Banner */}
+        {showResetBanner && (
+          <div className="bg-emerald-900 text-emerald-50 border border-emerald-700 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-md">
+            <div className="flex items-start gap-3">
+              <Check className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-bold text-sm text-white">
+                  {t(
+                    'All Test Data Cleared — Workspace is 100% Fresh & Ready!',
+                    '¡Todos los Datos de Prueba Eliminados — El Espacio está 100% Limpio y Listo!'
+                  )}
+                </p>
+                <p className="text-emerald-200">
+                  {t(
+                    'Sample orders, quotes, invoices, payment packets, W-2 timesheets, uploaded files, drafts, and feedback logs have all been wiped. Click "Download Fresh HTML to Send" to save a clean standalone file for your team.',
+                    'Las órdenes, cotizaciones, facturas, paquetes de pago, hojas de horas W-2, archivos subidos, borradores y reportes de prueba han sido eliminados. Haga clic en "Descargar HTML Limpio" para guardar una copia limpia para su equipo.'
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={downloadFreshStandaloneHtml}
+                className="px-3.5 py-2 rounded-lg bg-amber-400 text-stone-950 text-xs font-bold hover:bg-amber-300 inline-flex items-center gap-1.5 shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {t('Download Fresh HTML to Send', 'Descargar HTML Limpio para Enviar')}
+              </button>
+              <button
+                type="button"
+                onClick={restoreSampleDemoData}
+                className="px-3 py-2 rounded-lg bg-emerald-800 text-emerald-100 border border-emerald-600 text-xs font-semibold hover:bg-emerald-700 inline-flex items-center gap-1"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                {t('Restore Demo Data', 'Restaurar Demo')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowResetBanner(false)}
+                className="px-2.5 py-2 rounded-lg text-emerald-200 hover:text-white text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Global Human Review Responsibility Notice */}
         <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
@@ -918,12 +1157,18 @@ export default function DivineDashboard() {
                 <p className="text-2xl font-bold text-stone-900 mt-2">
                   {orders.length} {t('Open Orders', 'Órdenes Abiertas')}
                 </p>
-                <p className="text-xs text-red-700 font-medium mt-1">
-                  {t(
-                    '• 2 Threaten Nov 5 Install • 1 Missing Ack',
-                    '• 2 Amenazan Instalación 5 Nov • 1 Sin Acuse'
-                  )}
-                </p>
+                {orders.length > 0 ? (
+                  <p className="text-xs text-red-700 font-medium mt-1">
+                    {t(
+                      '• 2 Threaten Nov 5 Install • 1 Missing Ack',
+                      '• 2 Amenazan Instalación 5 Nov • 1 Sin Acuse'
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-emerald-700 font-medium mt-1">
+                    {t('✓ Clean — Upload POs or Quotes to track', '✓ Limpio — Suba POs o Cotizaciones')}
+                  </p>
+                )}
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
@@ -932,14 +1177,20 @@ export default function DivineDashboard() {
                   <FileSpreadsheet className="w-4 h-4 text-blue-600" />
                 </div>
                 <p className="text-2xl font-bold text-stone-900 mt-2">
-                  {t('3 Draft Updates', '3 Actualizaciones en Borrador')}
+                  {orders.length} {t('Draft Updates', 'Actualizaciones en Borrador')}
                 </p>
-                <p className="text-xs text-amber-800 font-medium mt-1">
-                  {t(
-                    '• 1 Line Over-Budget Risk (+$25 Freight)',
-                    '• 1 Línea con Riesgo de Sobrecosto (+$25 Flete)'
-                  )}
-                </p>
+                {orders.length > 0 ? (
+                  <p className="text-xs text-amber-800 font-medium mt-1">
+                    {t(
+                      '• 1 Line Over-Budget Risk (+$25 Freight)',
+                      '• 1 Línea con Riesgo de Sobrecosto (+$25 Flete)'
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-emerald-700 font-medium mt-1">
+                    {t('✓ Clean — Ready for Houzz CSV / Selections', '✓ Limpio — Listo para CSV de Houzz')}
+                  </p>
+                )}
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
@@ -948,14 +1199,22 @@ export default function DivineDashboard() {
                   <CreditCard className="w-4 h-4 text-purple-600" />
                 </div>
                 <p className="text-2xl font-bold text-stone-900 mt-2">
-                  {t('2 Packets ($8,450)', '2 Paquetes ($8,450)')}
+                  {paymentPackets.length}{' '}
+                  {t('Packets', 'Paquetes')} ($
+                  {paymentPackets.reduce((sum, p) => sum + p.invoiceAmount, 0).toLocaleString()})
                 </p>
-                <p className="text-xs text-red-700 font-medium mt-1">
-                  {t(
-                    '• Both Flagged (Zelle Mismatch / Missing Docs)',
-                    '• Ambos con Alerta (Discrepancia Zelle / Faltan Docs)'
-                  )}
-                </p>
+                {paymentPackets.length > 0 ? (
+                  <p className="text-xs text-red-700 font-medium mt-1">
+                    {t(
+                      '• Both Flagged (Zelle Mismatch / Missing Docs)',
+                      '• Ambos con Alerta (Discrepancia Zelle / Faltan Docs)'
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-emerald-700 font-medium mt-1">
+                    {t('✓ Clean — Upload Vendor Invoice to prep', '✓ Limpio — Suba Factura para preparar')}
+                  </p>
+                )}
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
@@ -964,14 +1223,22 @@ export default function DivineDashboard() {
                   <Clock className="w-4 h-4 text-emerald-600" />
                 </div>
                 <p className="text-2xl font-bold text-stone-900 mt-2">
-                  {t('Due Oct 21', 'Vence 21 Oct')}
+                  {payroll.entries.length > 0
+                    ? t('Due Oct 21', 'Vence 21 Oct')
+                    : t('0 Hrs Logged', '0 Hrs Registradas')}
                 </p>
-                <p className="text-xs text-red-700 font-medium mt-1">
-                  {t(
-                    '• 2 Hours Anomalies Flagged for Review',
-                    '• 2 Anomalías de Horas Marcadas para Revisión'
-                  )}
-                </p>
+                {payroll.entries.length > 0 ? (
+                  <p className="text-xs text-red-700 font-medium mt-1">
+                    {t(
+                      '• 2 Hours Anomalies Flagged for Review',
+                      '• 2 Anomalías de Horas Marcadas para Revisión'
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-emerald-700 font-medium mt-1">
+                    {t('✓ Clean — Upload W-2 Timesheet to begin', '✓ Limpio — Suba Hoja de Horas W-2')}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -1297,99 +1564,133 @@ export default function DivineDashboard() {
                   <StatusBadge status="DRAFT" size="sm" lang={lang} />
                 </div>
 
-                <ul className="space-y-3 text-xs">
-                  <li className="p-3 rounded-lg bg-red-50/70 border border-red-200 flex items-start justify-between gap-3">
-                    <div>
-                      <span className="font-bold text-red-900 block">
-                        {t(
-                          '[INSTALL RISK + SKU/FREIGHT DISCREPANCY] PO-SSS-2026-041 — Arteriors Chandelier',
-                          '[RIESGO DE INSTALACIÓN + DISCREPANCIA SKU/FLETE] PO-SSS-2026-041 — Candil Arteriors'
-                        )}
-                      </span>
-                      <span className="text-red-800">
-                        {t(
-                          'Vendor Ack lists Vintage Bronze (ART-89420-VB) instead of Antique Brass (ART-89420-AB), adds $175 freight, and shifts ETA to Nov 9 (4 days past Nov 5 Castellanos install). Review draft follow-up.',
-                          'El acuse del proveedor indica Vintage Bronze (ART-89420-VB) en lugar de Antique Brass (ART-89420-AB), agrega $175 de flete y cambia la entrega estimada al 9 de nov (4 días después de la instalación Castellanos del 5 de nov). Revisar borrador.'
-                        )}
-                      </span>
+                {orders.length === 0 && paymentPackets.length === 0 && payroll.entries.length === 0 ? (
+                  <div className="p-6 rounded-xl bg-stone-50 border border-stone-200 text-center space-y-3">
+                    <div className="text-xs font-bold text-stone-900">
+                      {t(
+                        'Workspace is Clean — No Active Discrepancies or Overdue Reminders',
+                        'Espacio Limpio — Sin Discrepancias Activas ni Recordatorios Vencidos'
+                      )}
                     </div>
-                    <button
-                      onClick={() => setActiveTab('procurement')}
-                      className="shrink-0 px-2.5 py-1 bg-white text-red-900 border border-red-300 rounded font-semibold hover:bg-red-100"
-                    >
-                      {t('Review PO', 'Ver Orden')}
-                    </button>
-                  </li>
+                    <p className="text-xs text-stone-500 max-w-md mx-auto">
+                      {t(
+                        'All sample/test data has been cleared. Upload a vendor Quote, Purchase Order, Acknowledgment, Invoice, Houzz CSV, or W-2 Timesheet above to begin.',
+                        'Todos los datos de prueba han sido eliminados. Suba una Cotización, Orden de Compra, Acuse, Factura, CSV de Houzz u Hoja de Horas W-2 arriba para comenzar.'
+                      )}
+                    </p>
+                    <div className="flex items-center justify-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500 text-stone-950 text-xs font-bold hover:bg-amber-400 inline-flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        {t('Upload Source File', 'Subir Archivo Fuente')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={restoreSampleDemoData}
+                        className="px-3 py-2 rounded-xl bg-white border border-stone-300 text-stone-700 text-xs font-semibold hover:bg-stone-100"
+                      >
+                        {t('Restore Demo Data', 'Restaurar Datos Demo')}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <ul className="space-y-3 text-xs">
+                    <li className="p-3 rounded-lg bg-red-50/70 border border-red-200 flex items-start justify-between gap-3">
+                      <div>
+                        <span className="font-bold text-red-900 block">
+                          {t(
+                            '[INSTALL RISK + SKU/FREIGHT DISCREPANCY] PO-SSS-2026-041 — Arteriors Chandelier',
+                            '[RIESGO DE INSTALACIÓN + DISCREPANCIA SKU/FLETE] PO-SSS-2026-041 — Candil Arteriors'
+                          )}
+                        </span>
+                        <span className="text-red-800">
+                          {t(
+                            'Vendor Ack lists Vintage Bronze (ART-89420-VB) instead of Antique Brass (ART-89420-AB), adds $175 freight, and shifts ETA to Nov 9 (4 days past Nov 5 Castellanos install). Review draft follow-up.',
+                            'El acuse del proveedor indica Vintage Bronze (ART-89420-VB) en lugar de Antique Brass (ART-89420-AB), agrega $175 de flete y cambia la entrega estimada al 9 de nov (4 días después de la instalación Castellanos del 5 de nov). Revisar borrador.'
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('procurement')}
+                        className="shrink-0 px-2.5 py-1 bg-white text-red-900 border border-red-300 rounded font-semibold hover:bg-red-100"
+                      >
+                        {t('Review PO', 'Ver Orden')}
+                      </button>
+                    </li>
 
-                  <li className="p-3 rounded-lg bg-red-50/70 border border-red-200 flex items-start justify-between gap-3">
-                    <div>
-                      <span className="font-bold text-red-900 block">
-                        {t(
-                          '[DAMAGED DELIVERY + MAFER COORDINATION] PO-SSS-2026-038 — Atelier Entry Console',
-                          '[ENTREGA DAÑADA + COORDINACIÓN CON MAFER] PO-SSS-2026-038 — Consola Atelier'
-                        )}
-                      </span>
-                      <span className="text-red-800">
-                        {t(
-                          'Delivered Oct 19 with cracked travertine top slab & 2 missing brass leveling feet. Coordinate Mafer for Oct 22 at 10:00 AM replacement pickup. Hold final payment INV-ABM-882.',
-                          'Entregado el 19 de oct con fisura en la cubierta de travertino y 2 patas niveladoras faltantes. Coordinar con Mafer el 22 de oct a las 10:00 AM para recolección. Retener pago final INV-ABM-882.'
-                        )}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setActiveTab('procurement')}
-                      className="shrink-0 px-2.5 py-1 bg-white text-red-900 border border-red-300 rounded font-semibold hover:bg-red-100"
-                    >
-                      {t('Mafer Log', 'Registro Mafer')}
-                    </button>
-                  </li>
+                    <li className="p-3 rounded-lg bg-red-50/70 border border-red-200 flex items-start justify-between gap-3">
+                      <div>
+                        <span className="font-bold text-red-900 block">
+                          {t(
+                            '[DAMAGED DELIVERY + MAFER COORDINATION] PO-SSS-2026-038 — Atelier Entry Console',
+                            '[ENTREGA DAÑADA + COORDINACIÓN CON MAFER] PO-SSS-2026-038 — Consola Atelier'
+                          )}
+                        </span>
+                        <span className="text-red-800">
+                          {t(
+                            'Delivered Oct 19 with cracked travertine top slab & 2 missing brass leveling feet. Coordinate Mafer for Oct 22 at 10:00 AM replacement pickup. Hold final payment INV-ABM-882.',
+                            'Entregado el 19 de oct con fisura en la cubierta de travertino y 2 patas niveladoras faltantes. Coordinar con Mafer el 22 de oct a las 10:00 AM para recolección. Retener pago final INV-ABM-882.'
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('procurement')}
+                        className="shrink-0 px-2.5 py-1 bg-white text-red-900 border border-red-300 rounded font-semibold hover:bg-red-100"
+                      >
+                        {t('Mafer Log', 'Registro Mafer')}
+                      </button>
+                    </li>
 
-                  <li className="p-3 rounded-lg bg-amber-50/70 border border-amber-200 flex items-start justify-between gap-3">
-                    <div>
-                      <span className="font-bold text-amber-900 block">
-                        {t(
-                          '[MISSING ACKNOWLEDGMENT — 7 DAYS OVERDUE] PO-SSS-2026-044 — Vanguard Sectional',
-                          '[FALTA ACUSE DE RECIBO — 7 DÍAS VENCIDO] PO-SSS-2026-044 — Seccional Vanguard'
-                        )}
-                      </span>
-                      <span className="text-amber-800">
-                        {t(
-                          'Order placed Oct 12 for Brickell Key Penthouse. No vendor acknowledgment or ship date received yet. Copy-ready follow-up draft prepared.',
-                          'Orden enviada el 12 de oct para Brickell Key Penthouse. Aún no se recibe confirmación ni fecha de envío del proveedor. Borrador de seguimiento listo para revisar.'
-                        )}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setActiveTab('assistant')}
-                      className="shrink-0 px-2.5 py-1 bg-white text-amber-900 border border-amber-300 rounded font-semibold hover:bg-amber-100"
-                    >
-                      {t('View Draft', 'Ver Borrador')}
-                    </button>
-                  </li>
+                    <li className="p-3 rounded-lg bg-amber-50/70 border border-amber-200 flex items-start justify-between gap-3">
+                      <div>
+                        <span className="font-bold text-amber-900 block">
+                          {t(
+                            '[MISSING ACKNOWLEDGMENT — 7 DAYS OVERDUE] PO-SSS-2026-044 — Vanguard Sectional',
+                            '[FALTA ACUSE DE RECIBO — 7 DÍAS VENCIDO] PO-SSS-2026-044 — Seccional Vanguard'
+                          )}
+                        </span>
+                        <span className="text-amber-800">
+                          {t(
+                            'Order placed Oct 12 for Brickell Key Penthouse. No vendor acknowledgment or ship date received yet. Copy-ready follow-up draft prepared.',
+                            'Orden enviada el 12 de oct para Brickell Key Penthouse. Aún no se recibe confirmación ni fecha de envío del proveedor. Borrador de seguimiento listo para revisar.'
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('assistant')}
+                        className="shrink-0 px-2.5 py-1 bg-white text-amber-900 border border-amber-300 rounded font-semibold hover:bg-amber-100"
+                      >
+                        {t('View Draft', 'Ver Borrador')}
+                      </button>
+                    </li>
 
-                  <li className="p-3 rounded-lg bg-purple-50/70 border border-purple-200 flex items-start justify-between gap-3">
-                    <div>
-                      <span className="font-bold text-purple-900 block">
-                        {t(
-                          '[PAYROLL DEADLINE: OCT 21 @ 3:00 PM] Sofia Morales (Single W-2 Employee)',
-                          '[FECHA LÍMITE DE NÓMINA: 21 OCT @ 3:00 PM] Sofia Morales (Única Empleada W-2)'
-                        )}
-                      </span>
-                      <span className="text-purple-800">
-                        {t(
-                          'Verify 2 flagged timesheet anomalies (Oct 8 missing clock-out; Oct 14 10-hr shift with 0 break), request Meliza’s written approval, and enter in QuickBooks Payroll Online.',
-                          'Verificar 2 anomalías de horas (8 oct sin hora de salida; 14 oct turno de 10 hrs sin descanso registrado), solicitar aprobación escrita de Meliza e ingresar en QuickBooks Payroll Online.'
-                        )}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setActiveTab('payroll')}
-                      className="shrink-0 px-2.5 py-1 bg-white text-purple-900 border border-purple-300 rounded font-semibold hover:bg-purple-100"
-                    >
-                      {t('Verify Hours', 'Verificar Horas')}
-                    </button>
-                  </li>
-                </ul>
+                    <li className="p-3 rounded-lg bg-purple-50/70 border border-purple-200 flex items-start justify-between gap-3">
+                      <div>
+                        <span className="font-bold text-purple-900 block">
+                          {t(
+                            '[PAYROLL DEADLINE: OCT 21 @ 3:00 PM] Sofia Morales (Single W-2 Employee)',
+                            '[FECHA LÍMITE DE NÓMINA: 21 OCT @ 3:00 PM] Sofia Morales (Única Empleada W-2)'
+                          )}
+                        </span>
+                        <span className="text-purple-800">
+                          {t(
+                            'Verify 2 flagged timesheet anomalies (Oct 8 missing clock-out; Oct 14 10-hr shift with 0 break), request Meliza’s written approval, and enter in QuickBooks Payroll Online.',
+                            'Verificar 2 anomalías de horas (8 oct sin hora de salida; 14 oct turno de 10 hrs sin descanso registrado), solicitar aprobación escrita de Meliza e ingresar en QuickBooks Payroll Online.'
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('payroll')}
+                        className="shrink-0 px-2.5 py-1 bg-white text-purple-900 border border-purple-300 rounded font-semibold hover:bg-purple-100"
+                      >
+                        {t('Verify Hours', 'Verificar Horas')}
+                      </button>
+                    </li>
+                  </ul>
+                )}
               </div>
 
               {/* Copy-Ready End-of-Day & Weekly/Monthly Digest */}
@@ -1413,7 +1714,19 @@ export default function DivineDashboard() {
                 </div>
 
                 <div className="bg-stone-50 border border-stone-200 rounded-lg p-3.5 text-xs font-mono whitespace-pre-wrap text-stone-800 leading-relaxed">
-{`[STATUS: DRAFT EOD SUMMARY — NEEDS HUMAN VERIFICATION]
+{orders.length === 0 && paymentPackets.length === 0 && payroll.entries.length === 0
+  ? `[STATUS: DRAFT EOD SUMMARY — NEEDS HUMAN VERIFICATION]
+Sixth Sense Studio — Fresh Workspace
+
+1. OPEN ORDERS & INSTALL RISKS:
+   • 0 Open Orders currently tracked. Upload vendor quotes, POs, or acknowledgments to begin 3-way matching.
+
+2. PENDING MELIZA APPROVALS & PAYMENT HOLDS:
+   • 0 Vendor Payment Packets pending.
+
+3. W-2 PAYROLL PREP:
+   • No W-2 timesheet uploaded for the current period yet.`
+  : `[STATUS: DRAFT EOD SUMMARY — NEEDS HUMAN VERIFICATION]
 Date: October 19, 2026 | Sixth Sense Studio
 
 1. OPEN ORDERS & INSTALL RISKS:
@@ -1434,7 +1747,7 @@ Date: October 19, 2026 | Sixth Sense Studio
                     onClick={() =>
                       copyToClipboard(
                         'eod-summary',
-                        `[STATUS: DRAFT EOD SUMMARY — NEEDS HUMAN VERIFICATION]\nDate: October 19, 2026 | Sixth Sense Studio\nOpen Orders: 3 | Discrepancies Flagged: 5 | Payments on Hold for Verification: 2 | Payroll Deadline: Oct 21`
+                        `[STATUS: DRAFT EOD SUMMARY — NEEDS HUMAN VERIFICATION]\nSixth Sense Studio\nOpen Orders: ${orders.length} | Payment Packets Pending: ${paymentPackets.length} | Uploaded Source Files: ${uploadedFiles.length}`
                       )
                     }
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-stone-900 text-white hover:bg-stone-800"
@@ -1472,25 +1785,36 @@ Date: October 19, 2026 | Sixth Sense Studio
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-stone-100">
-                        {INITIAL_VENDORS.map((v) => (
-                          <tr key={v.id}>
-                            <td className="py-2 pr-2 font-semibold text-stone-900">{v.name}</td>
-                            <td className="py-2 px-2">{v.totalOrdersCount}</td>
-                            <td className="py-2 px-2 text-amber-800 font-medium">{v.lateOrdersCount}</td>
-                            <td className="py-2 px-2 text-red-700 font-medium">{v.damagedOrWrongCount}</td>
-                            <td className="py-2 px-2 text-red-700 font-medium">{v.billingDiscrepancyCount}</td>
-                            <td className="py-2 pl-2">
-                              {v.hasW9 && v.hasCOI && (!v.requiresLienRelease || v.hasLienReleaseOnFile) ? (
-                                <span className="text-emerald-700 font-semibold">Complete</span>
-                              ) : (
-                                <span className="text-red-700 font-semibold">
-                                  Missing {!v.hasCOI ? 'COI ' : ''}
-                                  {v.requiresLienRelease && !v.hasLienReleaseOnFile ? '+ Lien Release' : ''}
-                                </span>
+                        {vendors.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-4 text-center text-stone-500">
+                              {t(
+                                'No vendor discrepancies or compliance flags recorded yet.',
+                                'Aún no hay discrepancias de proveedores ni alertas de cumplimiento registradas.'
                               )}
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          vendors.map((v) => (
+                            <tr key={v.id}>
+                              <td className="py-2 pr-2 font-semibold text-stone-900">{v.name}</td>
+                              <td className="py-2 px-2">{v.totalOrdersCount}</td>
+                              <td className="py-2 px-2 text-amber-800 font-medium">{v.lateOrdersCount}</td>
+                              <td className="py-2 px-2 text-red-700 font-medium">{v.damagedOrWrongCount}</td>
+                              <td className="py-2 px-2 text-red-700 font-medium">{v.billingDiscrepancyCount}</td>
+                              <td className="py-2 pl-2">
+                                {v.hasW9 && v.hasCOI && (!v.requiresLienRelease || v.hasLienReleaseOnFile) ? (
+                                  <span className="text-emerald-700 font-semibold">Complete</span>
+                                ) : (
+                                  <span className="text-red-700 font-semibold">
+                                    Missing {!v.hasCOI ? 'COI ' : ''}
+                                    {v.requiresLienRelease && !v.hasLienReleaseOnFile ? '+ Lien Release' : ''}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1525,88 +1849,105 @@ Date: October 19, 2026 | Sixth Sense Studio
                 <StatusBadge status="DRAFT" size="sm" lang={lang} />
               </div>
 
-              {INITIAL_QUOTE_COMPARISONS.map((comp, idx) => (
-                <div key={idx} className="space-y-3">
-                  <div className="bg-stone-50 p-3 rounded-lg border border-stone-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div>
-                      <span className="font-bold text-stone-900">{comp.itemTitle}</span> —{' '}
-                      <span className="text-stone-600">{comp.projectName}</span>
-                      <div className="text-stone-500 mt-0.5">
-                        <strong>Designer Locked Spec:</strong> {comp.lockedSpecSummary}
+              {quoteComparisons.length === 0 ? (
+                <div className="p-6 rounded-xl bg-stone-50 border border-stone-200 text-center space-y-2 text-xs text-stone-600">
+                  <div className="font-bold text-stone-900">
+                    {t(
+                      'No Quote Comparisons Loaded Yet',
+                      'Aún No Hay Comparaciones de Cotizaciones Cargadas'
+                    )}
+                  </div>
+                  <p>
+                    {t(
+                      'Upload vendor quotes (PDF/CSV) to compare pricing, freight, lead time, and payment terms against your locked project specification.',
+                      'Suba cotizaciones de proveedores (PDF/CSV) para comparar precio, flete, tiempo de entrega y términos contra la especificación del proyecto.'
+                    )}
+                  </p>
+                </div>
+              ) : (
+                quoteComparisons.map((comp, idx) => (
+                  <div key={idx} className="space-y-3">
+                    <div className="bg-stone-50 p-3 rounded-lg border border-stone-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div>
+                        <span className="font-bold text-stone-900">{comp.itemTitle}</span> —{' '}
+                        <span className="text-stone-600">{comp.projectName}</span>
+                        <div className="text-stone-500 mt-0.5">
+                          <strong>Designer Locked Spec:</strong> {comp.lockedSpecSummary}
+                        </div>
+                      </div>
+                      <div className="font-bold text-stone-800 bg-white px-3 py-1.5 rounded border border-stone-200">
+                        Project Budget Cap: ${comp.budgetedAmount.toLocaleString()}
                       </div>
                     </div>
-                    <div className="font-bold text-stone-800 bg-white px-3 py-1.5 rounded border border-stone-200">
-                      Project Budget Cap: ${comp.budgetedAmount.toLocaleString()}
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-stone-100 text-stone-700 border-b border-stone-200">
+                            <th className="p-2.5">Vendor & Quote #</th>
+                            <th className="p-2.5">Unit Price x Qty</th>
+                            <th className="p-2.5">Shipping / Freight</th>
+                            <th className="p-2.5">Total Landed Cost</th>
+                            <th className="p-2.5">Lead Time</th>
+                            <th className="p-2.5">Payment Terms</th>
+                            <th className="p-2.5">Spec & Budget Check</th>
+                            <th className="p-2.5 text-right">Draft PO Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-200">
+                          {comp.quotes.map((q) => (
+                            <tr key={q.id} className={q.matchesLockedSpec ? 'bg-emerald-50/20' : 'bg-red-50/30'}>
+                              <td className="p-2.5 font-bold text-stone-900">
+                                {q.vendorName}
+                                <div className="text-[11px] font-normal text-stone-500">{q.quoteNumber}</div>
+                              </td>
+                              <td className="p-2.5">
+                                ${q.unitPrice.toLocaleString()} × {q.quantity}
+                              </td>
+                              <td className="p-2.5">${q.freightCost.toLocaleString()}</td>
+                              <td className="p-2.5 font-bold text-stone-900">${q.totalCost.toLocaleString()}</td>
+                              <td className="p-2.5">{q.leadTimeWeeks} Weeks</td>
+                              <td className="p-2.5">{q.paymentTerms}</td>
+                              <td className="p-2.5">
+                                {q.matchesLockedSpec ? (
+                                  <span className="inline-flex items-center gap-1 text-emerald-800 font-semibold">
+                                    <Check className="w-3.5 h-3.5" /> Matches Locked Spec ($420 under budget)
+                                  </span>
+                                ) : (
+                                  <span className="text-red-800 font-semibold block">
+                                    ⚠ Flagged: {q.specDeviationNote}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-2.5 text-right">
+                                <button
+                                  onClick={() =>
+                                    copyToClipboard(
+                                      q.id,
+                                      `[STATUS: DRAFT PURCHASE ORDER — NEEDS HUMAN VERIFICATION — DO NOT SUBMIT WITHOUT REVIEW]\nPO Draft for: ${q.vendorName} (Ref Quote: ${q.quoteNumber})\nProject: ${comp.projectName}\nLocked Spec: ${comp.lockedSpecSummary}\nUnit Price: $${q.unitPrice} x ${q.quantity} | Freight: $${q.freightCost} | Total Draft PO: $${q.totalCost}\nTerms: ${q.paymentTerms}`
+                                    )
+                                  }
+                                  className="px-2.5 py-1.5 rounded bg-stone-900 text-white font-semibold hover:bg-stone-800 inline-flex items-center gap-1"
+                                >
+                                  {copiedId === q.id ? (
+                                    <>
+                                      <Check className="w-3 h-3 text-emerald-400" /> Draft PO Copied
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3 h-3" /> Copy Draft PO
+                                    </>
+                                  )}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left border-collapse">
-                      <thead>
-                        <tr className="bg-stone-100 text-stone-700 border-b border-stone-200">
-                          <th className="p-2.5">Vendor & Quote #</th>
-                          <th className="p-2.5">Unit Price x Qty</th>
-                          <th className="p-2.5">Shipping / Freight</th>
-                          <th className="p-2.5">Total Landed Cost</th>
-                          <th className="p-2.5">Lead Time</th>
-                          <th className="p-2.5">Payment Terms</th>
-                          <th className="p-2.5">Spec & Budget Check</th>
-                          <th className="p-2.5 text-right">Draft PO Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-stone-200">
-                        {comp.quotes.map((q) => (
-                          <tr key={q.id} className={q.matchesLockedSpec ? 'bg-emerald-50/20' : 'bg-red-50/30'}>
-                            <td className="p-2.5 font-bold text-stone-900">
-                              {q.vendorName}
-                              <div className="text-[11px] font-normal text-stone-500">{q.quoteNumber}</div>
-                            </td>
-                            <td className="p-2.5">
-                              ${q.unitPrice.toLocaleString()} × {q.quantity}
-                            </td>
-                            <td className="p-2.5">${q.freightCost.toLocaleString()}</td>
-                            <td className="p-2.5 font-bold text-stone-900">${q.totalCost.toLocaleString()}</td>
-                            <td className="p-2.5">{q.leadTimeWeeks} Weeks</td>
-                            <td className="p-2.5">{q.paymentTerms}</td>
-                            <td className="p-2.5">
-                              {q.matchesLockedSpec ? (
-                                <span className="inline-flex items-center gap-1 text-emerald-800 font-semibold">
-                                  <Check className="w-3.5 h-3.5" /> Matches Locked Spec ($420 under budget)
-                                </span>
-                              ) : (
-                                <span className="text-red-800 font-semibold block">
-                                  ⚠ Flagged: {q.specDeviationNote}
-                                </span>
-                              )}
-                            </td>
-                            <td className="p-2.5 text-right">
-                              <button
-                                onClick={() =>
-                                  copyToClipboard(
-                                    q.id,
-                                    `[STATUS: DRAFT PURCHASE ORDER — NEEDS HUMAN VERIFICATION — DO NOT SUBMIT WITHOUT REVIEW]\nPO Draft for: ${q.vendorName} (Ref Quote: ${q.quoteNumber})\nProject: ${comp.projectName}\nLocked Spec: ${comp.lockedSpecSummary}\nUnit Price: $${q.unitPrice} x ${q.quantity} | Freight: $${q.freightCost} | Total Draft PO: $${q.totalCost}\nTerms: ${q.paymentTerms}`
-                                  )
-                                }
-                                className="px-2.5 py-1.5 rounded bg-stone-900 text-white font-semibold hover:bg-stone-800 inline-flex items-center gap-1"
-                              >
-                                {copiedId === q.id ? (
-                                  <>
-                                    <Check className="w-3 h-3 text-emerald-400" /> Draft PO Copied
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3 h-3" /> Copy Draft PO
-                                  </>
-                                )}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             {/* Open Orders, 3-Way Comparison (PO/Quote vs Ack vs Invoice), and Mafer Coordination */}
@@ -1625,6 +1966,20 @@ Date: October 19, 2026 | Sixth Sense Studio
                   )}
                 </span>
               </div>
+
+              {orders.length === 0 && (
+                <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6 text-center space-y-2 text-xs text-stone-600">
+                  <div className="font-bold text-stone-900">
+                    {t('No Open Procurement Orders Tracked', 'No Hay Órdenes de Compra Abiertas')}
+                  </div>
+                  <p>
+                    {t(
+                      'Upload a Purchase Order, Order Acknowledgment, or Vendor Invoice to run a 3-way comparison and track Mafer receiving/pickup reminders.',
+                      'Suba una Orden de Compra, Acuse de Recibo o Factura para ejecutar la comparación de 3 vías y coordinar entregas con Mafer.'
+                    )}
+                  </p>
+                </div>
+              )}
 
               {orders.map((ord) => (
                 <div
@@ -1926,81 +2281,92 @@ Date: October 19, 2026 | Sixth Sense Studio
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-200">
-                    {orders.map((ord) => (
-                      <tr key={ord.id}>
-                        <td className="p-2.5 border border-stone-200">
-                          <div className="font-bold text-stone-900">{ord.itemName}</div>
-                          <div className="text-stone-600 font-medium">
-                            Room: {ord.roomCategory} • Linked PO: {ord.draftPo?.poNumber}
-                          </div>
-                          <div className="text-[11px] text-stone-500">
-                            Project: {ord.projectName} | Vendor: {ord.vendorName}
-                          </div>
-                        </td>
-                        <td className="p-2.5 border border-stone-200 font-semibold">
-                          ${ord.lockedSpec.budgetedTotal.toLocaleString()}
-                        </td>
-                        <td className="p-2.5 border border-stone-200 text-stone-600">
-                          <div>Procurement Status: {ord.houzzCurrentRecord.itemStatus}</div>
-                          <div>Cost: ${ord.houzzCurrentRecord.recordedCost.toLocaleString()}</div>
-                          <div>Order Date: {ord.houzzCurrentRecord.recordedOrderDate}</div>
-                          <div>Est. Delivery: {ord.houzzCurrentRecord.recordedEta}</div>
-                        </td>
-                        <td className="p-2.5 border border-stone-200 bg-amber-50/40 font-medium text-stone-900">
-                          <div>
-                            <strong>Procurement Status:</strong> {ord.houzzProposedUpdate.itemStatus}
-                          </div>
-                          <div>
-                            <strong>Cost:</strong> ${ord.houzzProposedUpdate.proposedCost.toLocaleString()}
-                          </div>
-                          <div>
-                            <strong>Order Date:</strong> {ord.houzzProposedUpdate.proposedOrderDate}
-                          </div>
-                          <div>
-                            <strong>Estimated Delivery:</strong> {ord.houzzProposedUpdate.proposedEta}
-                          </div>
-                        </td>
-                        <td className="p-2.5 border border-stone-200">
-                          <div className="space-y-1">
-                            {ord.houzzProposedUpdate.isOverBudgetRisk ? (
-                              <span className="inline-block px-2 py-0.5 rounded bg-red-100 text-red-900 font-bold">
-                                ⚠ Over Budget by ${ord.houzzProposedUpdate.overBudgetAmount} (Unapproved Freight)
-                              </span>
-                            ) : (
-                              <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-semibold">
-                                Within Line Budget (${ord.lockedSpec.budgetedTotal - ord.houzzProposedUpdate.proposedCost} buffer)
-                              </span>
-                            )}
-                            {ord.threatensInstallDate && (
-                              <div className="text-red-700 font-semibold">
-                                ⚠ Delivery Risk: Threatens {ord.targetInstallDate} install
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-2.5 border border-stone-200 text-right">
-                          <button
-                            onClick={() =>
-                              copyToClipboard(
-                                `houzz-${ord.id}`,
-                                `[DRAFT HOUZZ SELECTIONS TRACKER UPDATE — NEEDS HUMAN VERIFICATION]\nHouzz Path: Project (${ord.projectName}) → Planning → Selections → Tracker (Procurement View)\nItem: ${ord.itemName} (Room: ${ord.roomCategory})\nVendor: ${ord.houzzProposedUpdate.proposedVendor} | Linked PO: ${ord.draftPo?.poNumber}\nCost: $${ord.houzzProposedUpdate.proposedCost}\nOrder Date: ${ord.houzzProposedUpdate.proposedOrderDate}\nEstimated Delivery: ${ord.houzzProposedUpdate.proposedEta}\nProcurement Status: ${ord.houzzProposedUpdate.itemStatus}`
-                              )
-                            }
-                            className="px-2.5 py-1.5 rounded bg-stone-900 text-white font-semibold hover:bg-stone-800 inline-flex items-center gap-1"
-                          >
-                            {copiedId === `houzz-${ord.id}` ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" /> Copied Row
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" /> Copy Row
-                              </>
-                            )}
-                          </button>
+                    {orders.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-stone-500">
+                          {t(
+                            'No pending Houzz Selections Tracker updates. Upload a Houzz Pro CSV export, Quote, or PO to stage updates.',
+                            'No hay actualizaciones pendientes para el Rastreador de Selecciones de Houzz. Suba un CSV de Houzz, Cotización o PO para preparar actualizaciones.'
+                          )}
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      orders.map((ord) => (
+                        <tr key={ord.id}>
+                          <td className="p-2.5 border border-stone-200">
+                            <div className="font-bold text-stone-900">{ord.itemName}</div>
+                            <div className="text-stone-600 font-medium">
+                              Room: {ord.roomCategory} • Linked PO: {ord.draftPo?.poNumber}
+                            </div>
+                            <div className="text-[11px] text-stone-500">
+                              Project: {ord.projectName} | Vendor: {ord.vendorName}
+                            </div>
+                          </td>
+                          <td className="p-2.5 border border-stone-200 font-semibold">
+                            ${ord.lockedSpec.budgetedTotal.toLocaleString()}
+                          </td>
+                          <td className="p-2.5 border border-stone-200 text-stone-600">
+                            <div>Procurement Status: {ord.houzzCurrentRecord.itemStatus}</div>
+                            <div>Cost: ${ord.houzzCurrentRecord.recordedCost.toLocaleString()}</div>
+                            <div>Order Date: {ord.houzzCurrentRecord.recordedOrderDate}</div>
+                            <div>Est. Delivery: {ord.houzzCurrentRecord.recordedEta}</div>
+                          </td>
+                          <td className="p-2.5 border border-stone-200 bg-amber-50/40 font-medium text-stone-900">
+                            <div>
+                              <strong>Procurement Status:</strong> {ord.houzzProposedUpdate.itemStatus}
+                            </div>
+                            <div>
+                              <strong>Cost:</strong> ${ord.houzzProposedUpdate.proposedCost.toLocaleString()}
+                            </div>
+                            <div>
+                              <strong>Order Date:</strong> {ord.houzzProposedUpdate.proposedOrderDate}
+                            </div>
+                            <div>
+                              <strong>Estimated Delivery:</strong> {ord.houzzProposedUpdate.proposedEta}
+                            </div>
+                          </td>
+                          <td className="p-2.5 border border-stone-200">
+                            <div className="space-y-1">
+                              {ord.houzzProposedUpdate.isOverBudgetRisk ? (
+                                <span className="inline-block px-2 py-0.5 rounded bg-red-100 text-red-900 font-bold">
+                                  ⚠ Over Budget by ${ord.houzzProposedUpdate.overBudgetAmount} (Unapproved Freight)
+                                </span>
+                              ) : (
+                                <span className="inline-block px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-semibold">
+                                  Within Line Budget (${ord.lockedSpec.budgetedTotal - ord.houzzProposedUpdate.proposedCost} buffer)
+                                </span>
+                              )}
+                              {ord.threatensInstallDate && (
+                                <div className="text-red-700 font-semibold">
+                                  ⚠ Delivery Risk: Threatens {ord.targetInstallDate} install
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-2.5 border border-stone-200 text-right">
+                            <button
+                              onClick={() =>
+                                copyToClipboard(
+                                  `houzz-${ord.id}`,
+                                  `[DRAFT HOUZZ SELECTIONS TRACKER UPDATE — NEEDS HUMAN VERIFICATION]\nHouzz Path: Project (${ord.projectName}) → Planning → Selections → Tracker (Procurement View)\nItem: ${ord.itemName} (Room: ${ord.roomCategory})\nVendor: ${ord.houzzProposedUpdate.proposedVendor} | Linked PO: ${ord.draftPo?.poNumber}\nCost: $${ord.houzzProposedUpdate.proposedCost}\nOrder Date: ${ord.houzzProposedUpdate.proposedOrderDate}\nEstimated Delivery: ${ord.houzzProposedUpdate.proposedEta}\nProcurement Status: ${ord.houzzProposedUpdate.itemStatus}`
+                                )
+                              }
+                              className="px-2.5 py-1.5 rounded bg-stone-900 text-white font-semibold hover:bg-stone-800 inline-flex items-center gap-1"
+                            >
+                              {copiedId === `houzz-${ord.id}` ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-400" /> Copied Row
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" /> Copy Row
+                                </>
+                              )}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -2020,48 +2386,57 @@ Date: October 19, 2026 | Sixth Sense Studio
                 <StatusBadge status="NEEDS_KELDIA_VERIFICATION" size="sm" lang={lang} />
               </div>
 
-              {INITIAL_HOUZZ_MERGE_CANDIDATES.map((mc) => (
-                <div
-                  key={mc.id}
-                  className="bg-amber-50/60 border border-amber-200 rounded-lg p-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 text-xs"
-                >
-                  <div className="space-y-1">
-                    <div className="font-bold text-stone-900 text-sm">
-                      Eligible to Merge in Houzz Pro: {mc.draftPoNumbers.join(' + ')}
-                    </div>
-                    <div className="text-stone-700">
-                      Project: <strong>{mc.projectName}</strong> • Vendor: <strong>{mc.vendorName}</strong> • Combined Total: <strong>${mc.combinedAmount.toLocaleString()}</strong> (Est. Consolidated Freight Savings: <strong className="text-emerald-800">${mc.estimatedFreightSavings}</strong>)
-                    </div>
-                    <ul className="list-disc pl-5 text-stone-600">
-                      {mc.itemsSummary.map((line, idx) => (
-                        <li key={idx}>{line}</li>
-                      ))}
-                    </ul>
-                    <div className="text-amber-900 font-medium pt-1">
-                      <strong>Your Step in Houzz Pro:</strong> {mc.houzzNavigationHint}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() =>
-                      copyToClipboard(
-                        mc.id,
-                        `[DRAFT HOUZZ PO MERGE CHECKLIST — FOR REVIEW]\nProject: ${mc.projectName}\nVendor: ${mc.vendorName}\nEligible Draft POs: ${mc.draftPoNumbers.join(', ')}\nSteps in Houzz Pro: ${mc.houzzNavigationHint}`
-                      )
-                    }
-                    className="shrink-0 px-3 py-2 rounded-lg bg-stone-900 text-white font-semibold hover:bg-stone-800 inline-flex items-center gap-1.5"
-                  >
-                    {copiedId === mc.id ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied Merge Steps
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" /> Copy Merge Instructions
-                      </>
-                    )}
-                  </button>
+              {houzzMergeCandidates.length === 0 ? (
+                <div className="p-4 rounded-lg bg-stone-50 border border-stone-200 text-center text-xs text-stone-500">
+                  {t(
+                    'No duplicate Draft POs detected for merging.',
+                    'No se detectaron órdenes en borrador duplicadas para fusionar.'
+                  )}
                 </div>
-              ))}
+              ) : (
+                houzzMergeCandidates.map((mc) => (
+                  <div
+                    key={mc.id}
+                    className="bg-amber-50/60 border border-amber-200 rounded-lg p-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="font-bold text-stone-900 text-sm">
+                        Eligible to Merge in Houzz Pro: {mc.draftPoNumbers.join(' + ')}
+                      </div>
+                      <div className="text-stone-700">
+                        Project: <strong>{mc.projectName}</strong> • Vendor: <strong>{mc.vendorName}</strong> • Combined Total: <strong>${mc.combinedAmount.toLocaleString()}</strong> (Est. Consolidated Freight Savings: <strong className="text-emerald-800">${mc.estimatedFreightSavings}</strong>)
+                      </div>
+                      <ul className="list-disc pl-5 text-stone-600">
+                        {mc.itemsSummary.map((line, idx) => (
+                          <li key={idx}>{line}</li>
+                        ))}
+                      </ul>
+                      <div className="text-amber-900 font-medium pt-1">
+                        <strong>Your Step in Houzz Pro:</strong> {mc.houzzNavigationHint}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() =>
+                        copyToClipboard(
+                          mc.id,
+                          `[DRAFT HOUZZ PO MERGE CHECKLIST — FOR REVIEW]\nProject: ${mc.projectName}\nVendor: ${mc.vendorName}\nEligible Draft POs: ${mc.draftPoNumbers.join(', ')}\nSteps in Houzz Pro: ${mc.houzzNavigationHint}`
+                        )
+                      }
+                      className="shrink-0 px-3 py-2 rounded-lg bg-stone-900 text-white font-semibold hover:bg-stone-800 inline-flex items-center gap-1.5"
+                    >
+                      {copiedId === mc.id ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied Merge Steps
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" /> Copy Merge Instructions
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
 
             {/* Sub-section 2C: Indexed Houzz Pro Official Workflow Knowledge Base (6 Instruction Guides) */}
@@ -2156,6 +2531,36 @@ Date: October 19, 2026 | Sixth Sense Studio
                 </p>
               </div>
             </div>
+
+            {paymentPackets.length === 0 && (
+              <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6 text-center space-y-3 text-xs text-stone-600">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="font-bold text-sm text-stone-900">
+                    {t(
+                      'No Vendor Payment Approval Packets Pending',
+                      'No Hay Paquetes de Aprobación de Pago Pendientes'
+                    )}
+                  </span>
+                  <StatusBadge status="DRAFT" size="sm" lang={lang} />
+                </div>
+                <p className="max-w-lg mx-auto">
+                  {t(
+                    'Upload a Vendor Invoice (PDF) to prepare a payment verification packet with PO/Quote comparison, Zelle recipient check, and W-9/COI/Lien Release compliance check.',
+                    'Suba una Factura de Proveedor (PDF) para preparar un paquete de verificación de pago con comparación de PO/Cotización, destinatario Zelle y documentos W-9/COI.'
+                  )}
+                </p>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 rounded-xl bg-amber-500 text-stone-950 text-xs font-bold hover:bg-amber-400 inline-flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {t('Upload Vendor Invoice (PDF)', 'Subir Factura de Proveedor (PDF)')}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {paymentPackets.map((pkt) => (
               <div
@@ -2369,17 +2774,36 @@ Date: October 19, 2026 | Sixth Sense Studio
               </div>
 
               {/* Flagged Gaps & Inconsistencies */}
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2 text-xs">
-                <div className="font-bold text-red-900 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-red-700" />
-                  Apparent Gaps & Inconsistencies Flagged in Hours Source ({payroll.sourceDocumentName}):
+              {payroll.flaggedGapsAndAnomalies.length > 0 ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2 text-xs">
+                  <div className="font-bold text-red-900 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-red-700" />
+                    Apparent Gaps & Inconsistencies Flagged in Hours Source ({payroll.sourceDocumentName}):
+                  </div>
+                  <ul className="list-disc pl-5 space-y-1 text-red-900">
+                    {payroll.flaggedGapsAndAnomalies.map((flag, idx) => (
+                      <li key={idx}>{flag}</li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="list-disc pl-5 space-y-1 text-red-900">
-                  {payroll.flaggedGapsAndAnomalies.map((flag, idx) => (
-                    <li key={idx}>{flag}</li>
-                  ))}
-                </ul>
-              </div>
+              ) : (
+                <div className="bg-stone-50 border border-stone-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-stone-600">
+                  <span>
+                    {t(
+                      'No timesheet anomalies flagged — Upload a W-2 employee timesheet (CSV or PDF) to extract and check hours.',
+                      'No hay anomalías marcadas — Suba una hoja de horas de empleada W-2 (CSV o PDF) para extraer y verificar horas.'
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3.5 py-1.5 rounded-lg bg-amber-500 text-stone-950 font-bold hover:bg-amber-400 inline-flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {t('Upload W-2 Timesheet', 'Subir Hoja de Horas W-2')}
+                  </button>
+                </div>
+              )}
 
               {/* Hours Table */}
               <div className="overflow-x-auto">
@@ -2395,26 +2819,37 @@ Date: October 19, 2026 | Sixth Sense Studio
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-200">
-                    {payroll.entries.map((entry) => (
-                      <tr
-                        key={entry.date}
-                        className={entry.anomalyFlag ? 'bg-red-50/70 font-semibold text-red-950' : ''}
-                      >
-                        <td className="p-2 border border-stone-200">
-                          {entry.dayName}, {entry.date}
-                        </td>
-                        <td className="p-2 border border-stone-200">{entry.clockIn}</td>
-                        <td className="p-2 border border-stone-200">{entry.clockOut}</td>
-                        <td className="p-2 border border-stone-200">{entry.breakMinutes}m</td>
-                        <td className="p-2 border border-stone-200 font-bold">{entry.totalHours.toFixed(2)} hrs</td>
-                        <td className="p-2 border border-stone-200">
-                          <div>{entry.projectNotes}</div>
-                          {entry.anomalyFlag && (
-                            <div className="text-red-700 font-bold mt-0.5">⚠ {entry.anomalyFlag}</div>
+                    {payroll.entries.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-stone-500">
+                          {t(
+                            'No W-2 timesheet entries loaded. Upload a timesheet CSV or PDF to populate daily hours.',
+                            'No hay registros de horas W-2 cargados. Suba una hoja de horas en CSV o PDF para cargar las horas diarias.'
                           )}
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      payroll.entries.map((entry) => (
+                        <tr
+                          key={entry.date}
+                          className={entry.anomalyFlag ? 'bg-red-50/70 font-semibold text-red-950' : ''}
+                        >
+                          <td className="p-2 border border-stone-200">
+                            {entry.dayName}, {entry.date}
+                          </td>
+                          <td className="p-2 border border-stone-200">{entry.clockIn}</td>
+                          <td className="p-2 border border-stone-200">{entry.clockOut}</td>
+                          <td className="p-2 border border-stone-200">{entry.breakMinutes}m</td>
+                          <td className="p-2 border border-stone-200 font-bold">{entry.totalHours.toFixed(2)} hrs</td>
+                          <td className="p-2 border border-stone-200">
+                            <div>{entry.projectNotes}</div>
+                            {entry.anomalyFlag && (
+                              <div className="text-red-700 font-bold mt-0.5">⚠ {entry.anomalyFlag}</div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -2694,46 +3129,55 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                 </div>
 
                 <div className="space-y-4">
-                  {drafts.map((dr) => (
-                    <div
-                      key={dr.id}
-                      className="border border-stone-200 rounded-xl p-4 space-y-2.5 bg-stone-50/50"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-stone-200 text-stone-800">
-                          {dr.category}
-                        </span>
-                        <StatusBadge status={dr.verificationStatus} size="sm" lang={lang} />
-                      </div>
-                      <div className="text-xs">
-                        <div className="font-bold text-stone-900">{dr.subjectLine}</div>
-                        <div className="text-stone-500">
-                          Related: {dr.relatedEntityName} • Target Channel: {dr.recipientRole}
+                  {drafts.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-stone-50 border border-stone-200 text-center text-xs text-stone-500">
+                      {t(
+                        'No draft messages queued. Upload a source document or paste text above to generate copy-ready drafts.',
+                        'No hay borradores en cola. Suba un documento fuente o pegue texto arriba para generar borradores.'
+                      )}
+                    </div>
+                  ) : (
+                    drafts.map((dr) => (
+                      <div
+                        key={dr.id}
+                        className="border border-stone-200 rounded-xl p-4 space-y-2.5 bg-stone-50/50"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-stone-200 text-stone-800">
+                            {dr.category}
+                          </span>
+                          <StatusBadge status={dr.verificationStatus} size="sm" lang={lang} />
+                        </div>
+                        <div className="text-xs">
+                          <div className="font-bold text-stone-900">{dr.subjectLine}</div>
+                          <div className="text-stone-500">
+                            Related: {dr.relatedEntityName} • Target Channel: {dr.recipientRole}
+                          </div>
+                        </div>
+                        <pre className="whitespace-pre-wrap font-mono text-[11px] bg-white p-3 rounded-lg border border-stone-200 text-stone-800">
+                          {dr.bodyText}
+                        </pre>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() =>
+                              copyToClipboard(dr.id, `${dr.subjectLine}\n\n${dr.bodyText}`)
+                            }
+                            className="px-3 py-1.5 rounded-lg bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 inline-flex items-center gap-1.5"
+                          >
+                            {copiedId === dr.id ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied Draft
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" /> Copy Draft After Review
+                              </>
+                            )}
+                          </button>
                         </div>
                       </div>
-                      <pre className="whitespace-pre-wrap font-mono text-[11px] bg-white p-3 rounded-lg border border-stone-200 text-stone-800">
-                        {dr.bodyText}
-                      </pre>
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() =>
-                            copyToClipboard(dr.id, `${dr.subjectLine}\n\n${dr.bodyText}`)
-                          }
-                          className="px-3 py-1.5 rounded-lg bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 inline-flex items-center gap-1.5"
-                        >
-                          {copiedId === dr.id ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied Draft
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5" /> Copy Draft After Review
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -2861,6 +3305,24 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
           </div>
         )}
       </main>
+
+      {/* Floating Bug Report, Feature Request & Redesign Note Widget */}
+      <FeedbackWidget
+        lang={lang}
+        activeTabLabel={
+          activeTab === 'procurement'
+            ? '1. Procurement & Mafer'
+            : activeTab === 'houzz'
+            ? '2. Houzz & Budgets'
+            : activeTab === 'payments'
+            ? '3. Vendor Payment Prep'
+            : activeTab === 'payroll'
+            ? '4. W-2 Payroll Prep'
+            : activeTab === 'overview'
+            ? '5. Logs, Reminders & EOD'
+            : 'Ingest & Draft Studio'
+        }
+      />
     </div>
   );
 }
