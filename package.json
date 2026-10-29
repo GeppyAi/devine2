@@ -1,6 +1,6 @@
 {
   "name": "divine-sixth-sense-studio",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Divine — AI Operations & Procurement Assistant at Sixth Sense Studio (Procurement, Houzz Pro Tracker & Budgets, Vendor-Payment Prep, Payroll Prep, Logs & Reporting)",
   "scripts": {

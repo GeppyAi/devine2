@@ -262,9 +262,17 @@ export interface RedesignFeedbackItem {
   verificationStatus: VerificationStatus;
   reviewerVerifiedNote?: string;
   gitbridgeBugId?: string;
-  gitbridgeStatus?: 'SYNCED' | 'AUTO_FIXED' | 'PENDING_LOCAL' | 'ERROR';
+  gitbridgeStatus?:
+    | 'SYNCED'
+    | 'AUTO_FIXED'
+    | 'WAITING_GITHUB_LISTENER'
+    | 'PENDING_LOCAL'
+    | 'ERROR';
   gitbridgeAutoFixSummary?: string;
   gitbridgePatchedFile?: string;
   gitbridgeRebuiltStandalone?: boolean;
+  githubIssueNumber?: number;
+  githubIssueUrl?: string;
+  githubCommitSha?: string;
 }
 

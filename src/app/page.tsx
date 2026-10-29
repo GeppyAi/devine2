@@ -48,7 +48,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-const APP_CURRENT_VERSION = '1.1.0';
+const APP_CURRENT_VERSION = '1.1.1';
 const GITHUB_REPO_SLUG = 'GeppyAi/devine2';
 const GITHUB_REPO_URL = 'https://github.com/GeppyAi/devine2';
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/GeppyAi/devine2/main';
@@ -611,8 +611,10 @@ export default function DivineDashboard() {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateApplying, setUpdateApplying] = useState(false);
+  const [dismissedUpdateBannerVer, setDismissedUpdateBannerVer] = useState<string | null>(null);
   const [remoteVersionInfo, setRemoteVersionInfo] = useState<{
     version: string;
+    buildId?: string;
     builtAt: string;
     notes: string;
     commitSha?: string;
@@ -620,9 +622,30 @@ export default function DivineDashboard() {
     statusMessage: string;
   } | null>(null);
 
-  const checkForGitHubUpdates = async () => {
-    setShowUpdateModal(true);
-    setUpdateChecking(true);
+  const getInstalledVersion = () => {
+    if (typeof window !== 'undefined') {
+      const winVer = (window as unknown as { __DIVINE_APP_VERSION__?: string })
+        .__DIVINE_APP_VERSION__;
+      if (winVer && typeof winVer === 'string') return winVer;
+    }
+    return APP_CURRENT_VERSION;
+  };
+
+  const getInstalledBuildId = () => {
+    if (typeof window !== 'undefined') {
+      const winBuild = (window as unknown as { __DIVINE_BUILD_ID__?: string }).__DIVINE_BUILD_ID__;
+      if (winBuild && typeof winBuild === 'string') return winBuild;
+    }
+    return '';
+  };
+
+  const fetchAndCompareGitHubVersion = async (openModal = false) => {
+    if (openModal) {
+      setShowUpdateModal(true);
+      setUpdateChecking(true);
+    }
+    const localVer = getInstalledVersion();
+    const localBuildId = getInstalledBuildId();
     try {
       const cacheBust = Date.now();
       const res = await fetch(`${GITHUB_RAW_BASE}/version.json?t=${cacheBust}`, {
@@ -630,10 +653,14 @@ export default function DivineDashboard() {
       });
       if (res.ok) {
         const data = await res.json();
-        const remoteVer = String(data.version || APP_CURRENT_VERSION);
-        const isNewer = remoteVer !== APP_CURRENT_VERSION;
+        const remoteVer = String(data.version || localVer).trim();
+        const remoteBuildId = data.buildId ? String(data.buildId).trim() : undefined;
+        const isNewer =
+          remoteVer !== localVer ||
+          Boolean(remoteBuildId && localBuildId && remoteBuildId !== localBuildId);
         setRemoteVersionInfo({
           version: remoteVer,
+          buildId: remoteBuildId,
           builtAt: data.builtAt || 'Latest Main Branch',
           notes:
             data.releaseNotes ||
@@ -641,10 +668,10 @@ export default function DivineDashboard() {
           commitSha: data.commitSha,
           hasNewerVersion: isNewer,
           statusMessage: isNewer
-            ? `New version v${remoteVer} is available on GitHub!`
-            : `Connected to GitHub (${GITHUB_REPO_SLUG}). Latest version on main: v${remoteVer}.`,
+            ? `Update Detected! GitHub has v${remoteVer} (You are running v${localVer}).`
+            : `Up to Date — Running latest version v${localVer} from GitHub (${GITHUB_REPO_SLUG}).`,
         });
-      } else {
+      } else if (openModal) {
         // Fallback to GitHub Commits API if version.json is not yet pushed
         const commitRes = await fetch(
           `https://api.github.com/repos/${GITHUB_REPO_SLUG}/commits/main`
@@ -656,7 +683,7 @@ export default function DivineDashboard() {
             ? new Date(commitData.commit.committer.date).toLocaleString()
             : 'Latest';
           setRemoteVersionInfo({
-            version: `${APP_CURRENT_VERSION} (${shaShort})`,
+            version: `${localVer} (${shaShort})`,
             builtAt: commitDate,
             notes: commitData.commit?.message || 'Latest commit on GeppyAi/devine2 main branch.',
             commitSha: shaShort,
@@ -665,7 +692,7 @@ export default function DivineDashboard() {
           });
         } else {
           setRemoteVersionInfo({
-            version: APP_CURRENT_VERSION,
+            version: localVer,
             builtAt: 'Pending First Push to main',
             notes:
               'Repository https://github.com/GeppyAi/devine2 is configured. Once the latest commit is pushed to the main branch, clicking Update will automatically pull it.',
@@ -676,18 +703,42 @@ export default function DivineDashboard() {
         }
       }
     } catch {
-      setRemoteVersionInfo({
-        version: APP_CURRENT_VERSION,
-        builtAt: 'Offline / Local Mode',
-        notes:
-          'Unable to reach github.com/GeppyAi/devine2 right now. Your local standalone app continues to work 100% offline.',
-        hasNewerVersion: false,
-        statusMessage: 'Currently offline or repository not reachable.',
-      });
+      if (openModal) {
+        setRemoteVersionInfo({
+          version: localVer,
+          builtAt: 'Offline / Local Mode',
+          notes:
+            'Unable to reach github.com/GeppyAi/devine2 right now. Your local standalone app continues to work 100% offline.',
+          hasNewerVersion: false,
+          statusMessage: 'Currently offline or repository not reachable.',
+        });
+      }
     } finally {
-      setUpdateChecking(false);
+      if (openModal) {
+        setUpdateChecking(false);
+      }
     }
   };
+
+  const checkForGitHubUpdates = async () => {
+    await fetchAndCompareGitHubVersion(true);
+  };
+
+  // Automatically poll GitHub version.json in the background so the app immediately notices when a new update is published
+  useEffect(() => {
+    fetchAndCompareGitHubVersion(false);
+    const interval = setInterval(() => {
+      fetchAndCompareGitHubVersion(false);
+    }, 15000);
+    const onFixPublished = () => {
+      fetchAndCompareGitHubVersion(false);
+    };
+    window.addEventListener('divine-github-update-ready', onFixPublished);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('divine-github-update-ready', onFixPublished);
+    };
+  }, []);
 
   const hotLoadGitHubUpdate = async () => {
     setUpdateApplying(true);
@@ -882,12 +933,35 @@ export default function DivineDashboard() {
                 'Check & pull the latest Divine app update from github.com/GeppyAi/devine2',
                 'Comprobar y descargar la última versión de Divine desde github.com/GeppyAi/devine2'
               )}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border border-stone-300 bg-stone-900 text-white hover:bg-stone-800 transition shadow-sm"
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition shadow-sm ${
+                remoteVersionInfo?.hasNewerVersion
+                  ? 'border-emerald-400 bg-emerald-800 text-white hover:bg-emerald-700 ring-2 ring-emerald-400/50'
+                  : 'border-stone-300 bg-stone-900 text-white hover:bg-stone-800'
+              }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${updateChecking ? 'animate-spin' : ''}`} />
-              <span>{t('Update from GitHub', 'Actualizar desde GitHub')}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                v{APP_CURRENT_VERSION}
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${
+                  remoteVersionInfo?.hasNewerVersion ? 'text-emerald-300 animate-spin' : 'text-amber-400'
+                } ${updateChecking ? 'animate-spin' : ''}`}
+              />
+              <span>
+                {remoteVersionInfo?.hasNewerVersion
+                  ? t(
+                      `Update Available: v${remoteVersionInfo.version}`,
+                      `Actualización Lista: v${remoteVersionInfo.version}`
+                    )
+                  : t('Update from GitHub', 'Actualizar desde GitHub')}
+              </span>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                  remoteVersionInfo?.hasNewerVersion
+                    ? 'bg-emerald-400 text-stone-950 border-emerald-200 font-extrabold'
+                    : 'bg-amber-400/20 text-amber-300 border-amber-400/30'
+                }`}
+              >
+                {remoteVersionInfo?.hasNewerVersion
+                  ? `v${getInstalledVersion()} → v${remoteVersionInfo.version}`
+                  : `v${getInstalledVersion()}`}
               </span>
             </button>
 
@@ -1006,7 +1080,7 @@ export default function DivineDashboard() {
                 <span className="text-stone-500 font-medium">
                   {t('Installed App Version:', 'Versión Instalada:')}
                 </span>
-                <span className="font-mono font-bold text-stone-900">v{APP_CURRENT_VERSION}</span>
+                <span className="font-mono font-bold text-stone-900">v{getInstalledVersion()}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-stone-500 font-medium">
@@ -1070,6 +1144,56 @@ export default function DivineDashboard() {
 
       {/* Main Content Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 space-y-6">
+        {/* Live GitHub Update Available Banner (Triggered Automatically When GitHub Version Changes) */}
+        {remoteVersionInfo?.hasNewerVersion &&
+          dismissedUpdateBannerVer !== remoteVersionInfo.version && (
+            <div className="bg-stone-900 text-white border-2 border-emerald-400 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg">
+              <div className="flex items-start gap-3">
+                <RefreshCw className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5 animate-spin" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-sm text-emerald-300">
+                    {t(
+                      `New Update Published on GitHub: v${remoteVersionInfo.version} (You are running v${getInstalledVersion()})`,
+                      `Nueva Actualización Publicada en GitHub: v${remoteVersionInfo.version} (Versión actual: v${getInstalledVersion()})`
+                    )}
+                  </p>
+                  <p className="text-stone-300">
+                    {remoteVersionInfo.notes} • {t('Built:', 'Compilado:')} {remoteVersionInfo.builtAt}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={updateApplying}
+                  onClick={hotLoadGitHubUpdate}
+                  className="px-3.5 py-2 rounded-lg bg-emerald-500 text-stone-950 font-bold text-xs hover:bg-emerald-400 inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${updateApplying ? 'animate-spin' : ''}`} />
+                  {t(
+                    `Hot-Load v${remoteVersionInfo.version} Now`,
+                    `Cargar v${remoteVersionInfo.version} Ahora`
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={updateApplying}
+                  onClick={downloadGitHubUpdateFile}
+                  className="px-3 py-2 rounded-lg bg-amber-400 text-stone-950 font-bold text-xs hover:bg-amber-300 inline-flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {t('Download HTML', 'Descargar HTML')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDismissedUpdateBannerVer(remoteVersionInfo.version)}
+                  className="px-2.5 py-2 rounded-lg bg-stone-800 text-stone-300 hover:bg-stone-700 font-semibold text-xs"
+                >
+                  {t('Dismiss', 'Ocultar')}
+                </button>
+              </div>
+            </div>
+          )}
         {/* Fresh / Reset Confirmation Banner */}
         {showResetBanner && (
           <div className="bg-emerald-900 text-emerald-50 border border-emerald-700 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-md">

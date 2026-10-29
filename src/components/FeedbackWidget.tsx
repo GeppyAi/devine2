@@ -209,22 +209,37 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
     }
   }, [items, hasLoadedStorage]);
 
-  // Hot-reload the live app from GitBridge's freshly rebuilt standalone HTML (or reload localhost)
+  // Hot-reload the live app from GitHub's freshly republished standalone HTML or local GitBridge
   const hotReloadFromGitbridge = async () => {
     try {
-      if (
-        typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-      ) {
-        window.location.reload();
-        return;
+      // 1. If local GitBridge is reachable, try its freshly built standalone HTML first
+      if (gitbridgeOnline) {
+        try {
+          const localRes = await fetch(
+            `${GITBRIDGE_BASE_URL}/api/apps/${GITBRIDGE_APP_SLUG}/standalone-html?t=${Date.now()}`,
+            { cache: 'no-store' }
+          );
+          if (localRes.ok) {
+            const html = await localRes.text();
+            if (html.includes('<!DOCTYPE html>')) {
+              document.open();
+              document.write(html);
+              document.close();
+              return;
+            }
+          }
+        } catch {
+          // Fall through to GitHub raw standalone HTML
+        }
       }
-      const res = await fetch(
-        `${GITBRIDGE_BASE_URL}/api/apps/${GITBRIDGE_APP_SLUG}/standalone-html?t=${Date.now()}`,
+
+      // 2. Pull the newly republished standalone HTML directly from GitHub (works from anywhere!)
+      const ghRes = await fetch(
+        `https://raw.githubusercontent.com/GeppyAi/devine2/main/Divine_Sixth_Sense_Studio_Standalone.html?t=${Date.now()}`,
         { cache: 'no-store' }
       );
-      if (res.ok) {
-        const html = await res.text();
+      if (ghRes.ok) {
+        const html = await ghRes.text();
         if (html.includes('<!DOCTYPE html>')) {
           document.open();
           document.write(html);
@@ -238,61 +253,124 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
     }
   };
 
-  // Send a feedback item to GitBridge (/api/apps/devine2/bugs) for instant notification & optional AI Auto-Fix
+  // Poll GitHub version.json & closed issues when waiting for a remote GitBridge Listener fix
+  const pollGitHubForRemoteFix = useCallback(
+    (itemId: string, baselineVer: string) => {
+      let attempts = 0;
+      const timer = setInterval(async () => {
+        attempts += 1;
+        if (attempts > 45) {
+          clearInterval(timer);
+          return;
+        }
+        try {
+          const res = await fetch(
+            `https://raw.githubusercontent.com/GeppyAi/devine2/main/version.json?t=${Date.now()}`,
+            { cache: 'no-store' }
+          );
+          if (!res.ok) return;
+          const vData = await res.json();
+          const remoteVer = String(vData?.version || '').trim();
+          if (remoteVer && remoteVer !== baselineVer) {
+            clearInterval(timer);
+            setItems((prev) =>
+              prev.map((it) =>
+                it.id === itemId
+                  ? {
+                      ...it,
+                      gitbridgeStatus: 'AUTO_FIXED',
+                      gitbridgeAutoFixSummary: `Fixed & republished to GitHub as v${remoteVer} (${vData?.builtAt || 'latest'})`,
+                      gitbridgeRebuiltStandalone: true,
+                    }
+                  : it
+              )
+            );
+            setGitbridgeBanner({
+              type: 'success',
+              canHotReload: true,
+              message: t(
+                `✅ GitBridge Listener published v${remoteVer} to GitHub! Click "Hot-Reload Updated App Now" to load the fix.`,
+                `✅ ¡GitBridge Listener publicó v${remoteVer} en GitHub! Haga clic en "Recargar App Actualizada Ahora" para cargar la corrección.`
+              ),
+            });
+            window.dispatchEvent(new Event('divine-github-update-ready'));
+            if (autoHotReloadAfterFix) {
+              setTimeout(() => {
+                hotReloadFromGitbridge();
+              }, 1200);
+            }
+          }
+        } catch {
+          // Continue polling
+        }
+      }, 5000);
+    },
+    [autoHotReloadAfterFix, lang]
+  );
+
+  // Send a feedback item to GitBridge (/api/apps/devine2/bugs) or relay via GitHub Issues -> GitBridge Listener
   const sendItemToGitbridge = async (
     item: RedesignFeedbackItem,
     runAutoFix: boolean
   ): Promise<void> => {
     setIsProcessingGitbridge(true);
     setProcessingItemId(item.id);
+    const currentAppVer =
+      (typeof window !== 'undefined' &&
+        (window as unknown as { __DIVINE_APP_VERSION__?: string }).__DIVINE_APP_VERSION__) ||
+      '1.1.0';
+
     setGitbridgeBanner({
       type: 'info',
       message: runAutoFix
         ? t(
-            `GitBridge notified! Antigravity is applying the live code fix for "${item.title}" and rebuilding Divine...`,
-            `¡GitBridge notificado! Antigravity está aplicando el cambio en vivo para "${item.title}" y reconstruyendo Divine...`
+            `Notifying GitBridge! Applying AI code fix for "${item.title}", bumping version from v${currentAppVer}, and republishing to GitHub...`,
+            `¡Notificando a GitBridge! Aplicando corrección para "${item.title}", incrementando versión desde v${currentAppVer} y republicando en GitHub...`
           )
         : t(
-            `Sending "${item.title}" to GitBridge Backlog, Health Card & Desktop Notification...`,
-            `Enviando "${item.title}" al Backlog de GitBridge, Health Card y Notificación de Escritorio...`
+            `Sending "${item.title}" to GitBridge Backlog, Health Card & GitHub...`,
+            `Enviando "${item.title}" al Backlog de GitBridge, Health Card y GitHub...`
           ),
     });
 
+    const capturedErrors =
+      typeof window !== 'undefined' &&
+      Array.isArray((window as unknown as { GEPPY_CAPTURED_ERRORS?: string[] }).GEPPY_CAPTURED_ERRORS)
+        ? (window as unknown as { GEPPY_CAPTURED_ERRORS: string[] }).GEPPY_CAPTURED_ERRORS.slice(0, 10)
+        : [];
+
+    const severityMap: Record<FeedbackPriority, string> = {
+      HIGH: 'high',
+      MEDIUM: 'medium',
+      LOW: 'low',
+    };
+
+    const bugPayload = {
+      client_feedback_id: item.id,
+      app_slug: GITBRIDGE_APP_SLUG,
+      app_name: 'Devine2',
+      category: item.category,
+      target_area: item.targetArea,
+      reporter_name: item.reporterName,
+      title: item.title,
+      description: item.description || item.title,
+      redesign_suggestion: item.redesignSuggestion || '',
+      severity: severityMap[item.priority] || 'high',
+      file_path: 'src/app/page.tsx',
+      url: typeof window !== 'undefined' ? window.location.href : '',
+      user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      viewport: typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : '',
+      console_errors: capturedErrors,
+      auto_fix: runAutoFix,
+      log_to_health_card: true,
+      create_github_issue: true,
+    };
+
     try {
-      const capturedErrors =
-        typeof window !== 'undefined' &&
-        Array.isArray((window as unknown as { GEPPY_CAPTURED_ERRORS?: string[] }).GEPPY_CAPTURED_ERRORS)
-          ? (window as unknown as { GEPPY_CAPTURED_ERRORS: string[] }).GEPPY_CAPTURED_ERRORS.slice(0, 10)
-          : [];
-
-      const severityMap: Record<FeedbackPriority, string> = {
-        HIGH: 'high',
-        MEDIUM: 'medium',
-        LOW: 'low',
-      };
-
       const res = await fetch(`${GITBRIDGE_BASE_URL}/api/apps/${GITBRIDGE_APP_SLUG}/bugs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          app_slug: GITBRIDGE_APP_SLUG,
-          app_name: 'Devine2',
-          category: item.category,
-          target_area: item.targetArea,
-          reporter_name: item.reporterName,
-          title: item.title,
-          description: item.description || item.title,
-          redesign_suggestion: item.redesignSuggestion || '',
-          severity: severityMap[item.priority] || 'high',
-          file_path: 'src/app/page.tsx',
-          url: typeof window !== 'undefined' ? window.location.href : '',
-          user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-          viewport:
-            typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : '',
-          console_errors: capturedErrors,
-          auto_fix: runAutoFix,
-          log_to_health_card: true,
-        }),
+        body: JSON.stringify(bugPayload),
       });
 
       if (!res.ok) {
@@ -304,6 +382,9 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
       const fixRes = bugObj?.auto_fix_result || {};
       const wasAutoFixed = Boolean(fixRes?.applied);
       const patchedFile = fixRes?.file_path || bugObj?.target_file || 'src/app/page.tsx';
+      const publishedVer = fixRes?.published_version || '';
+      const commitSha = fixRes?.commit_hash || '';
+      const republished = Boolean(fixRes?.republished_to_github);
       const explanation =
         fixRes?.explanation ||
         bugObj?.diagnosis_summary ||
@@ -316,9 +397,13 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
                 ...existing,
                 gitbridgeBugId: bugObj?.id,
                 gitbridgeStatus: wasAutoFixed ? 'AUTO_FIXED' : 'SYNCED',
-                gitbridgeAutoFixSummary: explanation,
+                gitbridgeAutoFixSummary:
+                  explanation +
+                  (publishedVer ? ` (Published v${publishedVer} to GitHub)` : ''),
                 gitbridgePatchedFile: patchedFile,
                 gitbridgeRebuiltStandalone: Boolean(fixRes?.rebuilt_bundle),
+                githubIssueUrl: bugObj?.github_issue_url || undefined,
+                githubCommitSha: commitSha || undefined,
               }
             : existing
         )
@@ -326,17 +411,23 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
 
       setGitbridgeOnline(true);
       checkGitbridgeConnection();
+      window.dispatchEvent(new Event('divine-github-update-ready'));
+
       setGitbridgeBanner({
         type: 'success',
         canHotReload: wasAutoFixed,
         message: wasAutoFixed
           ? t(
-              `✅ GitBridge Auto-Fix Complete on ${patchedFile}! ${explanation}`,
-              `✅ ¡Auto-Corrección de GitBridge completada en ${patchedFile}! ${explanation}`
+              `✅ Auto-Fix Complete on ${patchedFile}${
+                publishedVer ? ` • Version bumped to v${publishedVer}` : ''
+              }${republished ? ' & Republished to GitHub!' : '!'} ${explanation}`,
+              `✅ ¡Auto-Corrección completada en ${patchedFile}${
+                publishedVer ? ` • Versión actualizada a v${publishedVer}` : ''
+              }${republished ? ' y Republicada en GitHub!' : '!'} ${explanation}`
             )
           : t(
-              `✅ Logged to GitBridge Backlog & Desktop Notification sent! (${explanation})`,
-              `✅ ¡Registrado en el Backlog de GitBridge y notificación enviada! (${explanation})`
+              `✅ Logged to GitBridge Backlog & GitHub! (${explanation})`,
+              `✅ ¡Registrado en el Backlog de GitBridge y GitHub! (${explanation})`
             ),
       });
 
@@ -346,22 +437,47 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
         }, 1200);
       }
     } catch {
+      // Remote machine fallback: Report through GitHub Issues -> GitBridge Listener on owner's PC picks it up, fixes, bumps version & republishes to GitHub!
       setGitbridgeOnline(false);
+      const issueTitle = `[GeppyBug] [${item.category}] ${item.title}`;
+      const issueBody =
+        `### 🐞 Remote Divine Bug / Edit Report\n` +
+        `- **Category:** \`${item.category}\`\n` +
+        `- **Priority:** \`${item.priority}\`\n` +
+        `- **Section:** ${item.targetArea}\n` +
+        `- **Reported By:** ${item.reporterName}\n` +
+        `- **Current App Version:** \`v${currentAppVer}\`\n\n` +
+        `#### Description\n${item.description || item.title}\n\n` +
+        (item.redesignSuggestion ? `#### Redesign Instruction\n${item.redesignSuggestion}\n\n` : '') +
+        `<!-- GEPPY_BUG_PAYLOAD_START\n${JSON.stringify(bugPayload)}\nGEPPY_BUG_PAYLOAD_END -->`;
+
+      const githubIssueNewUrl = `https://github.com/GeppyAi/devine2/issues/new?labels=geppy-remote-bug&title=${encodeURIComponent(
+        issueTitle
+      )}&body=${encodeURIComponent(issueBody)}`;
+
       setItems((prev) =>
         prev.map((existing) =>
           existing.id === item.id
             ? {
                 ...existing,
-                gitbridgeStatus: 'PENDING_LOCAL',
+                gitbridgeStatus: 'WAITING_GITHUB_LISTENER',
+                githubIssueUrl: githubIssueNewUrl,
               }
             : existing
         )
       );
+
+      if (typeof window !== 'undefined') {
+        window.open(githubIssueNewUrl, '_blank', 'noopener,noreferrer');
+      }
+
+      pollGitHubForRemoteFix(item.id, currentAppVer);
+
       setGitbridgeBanner({
-        type: 'error',
+        type: 'info',
         message: t(
-          'Saved locally! GitBridge (http://127.0.0.1:8000) is not reachable right now — you can click "Auto-Fix via GitBridge" on this item anytime once GitBridge is open.',
-          '¡Guardado localmente! GitBridge (http://127.0.0.1:8000) no está disponible ahora — puede hacer clic en "Auto-Fix via GitBridge" cuando GitBridge esté abierto.'
+          `📡 Opened GitHub Issue Relay for "${item.title}"! Submit the pre-filled issue on GitHub — GitBridge's Listener on the owner's PC will automatically detect it, apply the fix, bump the version from v${currentAppVer}, and republish to GitHub while this window watches for the update!`,
+          `📡 ¡Relé de GitHub abierto para "${item.title}"! Envíe el reporte pre-llenado en GitHub — el Listener de GitBridge lo detectará automáticamente, aplicará la corrección, subirá la nueva versión desde v${currentAppVer} a GitHub y esta ventana le avisará al instante!`
         ),
       });
     } finally {
@@ -1377,7 +1493,12 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
                               </span>
                               {item.gitbridgeStatus === 'AUTO_FIXED' && (
                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
-                                  ⚡ {t('Auto-Patched by GitBridge', 'Auto-Corregido por GitBridge')}
+                                  ⚡ {t('Auto-Patched & Republished', 'Auto-Corregido y Publicado')}
+                                </span>
+                              )}
+                              {item.gitbridgeStatus === 'WAITING_GITHUB_LISTENER' && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-950 border border-amber-300">
+                                  📡 {t('GitHub Relay → Waiting for GitBridge Listener', 'Relé GitHub → Esperando Listener')}
                                 </span>
                               )}
                               {item.gitbridgeStatus === 'SYNCED' && (

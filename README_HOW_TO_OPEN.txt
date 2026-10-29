@@ -1,6 +1,6 @@
 ========================================================================
 DIVINE — AI OPERATIONS & PROCUREMENT ASSISTANT (SIXTH SENSE STUDIO)
-SELF-CONTAINED PORTABLE APPLICATION (v1.1.0)
+SELF-CONTAINED PORTABLE APPLICATION (v1.1.1)
 ========================================================================
 
 HOW TO USE THIS APP (NO INSTALLATION REQUIRED):

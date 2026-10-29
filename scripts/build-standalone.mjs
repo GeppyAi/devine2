@@ -12,6 +12,55 @@ const autoprefixer = require('autoprefixer');
 const ROOT = process.cwd();
 
 async function buildStandalone() {
+  console.log('0. Auto-incrementing semantic version for standalone release...');
+  const versionJsonPath = path.join(ROOT, 'version.json');
+  let prevVersion = '1.1.0';
+  try {
+    if (fs.existsSync(versionJsonPath)) {
+      const parsedVer = JSON.parse(fs.readFileSync(versionJsonPath, 'utf8'));
+      if (parsedVer && typeof parsedVer.version === 'string') {
+        prevVersion = parsedVer.version.trim();
+      }
+    }
+  } catch {
+    // Fallback to 1.1.0
+  }
+
+  const shouldBump = process.env.DIVINE_BUMP_VERSION !== 'false';
+  let nextVersion = prevVersion;
+  if (shouldBump) {
+    const parts = prevVersion.split('.').map((n) => parseInt(n, 10));
+    if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
+      nextVersion = `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
+    } else {
+      nextVersion = '1.1.1';
+    }
+  }
+  console.log(`   Version bumped: v${prevVersion} -> v${nextVersion}`);
+
+  // Sync APP_CURRENT_VERSION in src/app/page.tsx and package.json before transpiling
+  const pageTsxPath = path.join(ROOT, 'src', 'app', 'page.tsx');
+  if (fs.existsSync(pageTsxPath)) {
+    const rawPage = fs.readFileSync(pageTsxPath, 'utf8');
+    const updatedPage = rawPage.replace(
+      /const APP_CURRENT_VERSION = ['"][^'"]+['"];/,
+      `const APP_CURRENT_VERSION = '${nextVersion}';`
+    );
+    if (updatedPage !== rawPage) {
+      fs.writeFileSync(pageTsxPath, updatedPage, 'utf8');
+    }
+  }
+  const pkgJsonPath = path.join(ROOT, 'package.json');
+  if (fs.existsSync(pkgJsonPath)) {
+    try {
+      const pkgObj = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+      pkgObj.version = nextVersion;
+      fs.writeFileSync(pkgJsonPath, JSON.stringify(pkgObj, null, 2) + '\n', 'utf8');
+    } catch {
+      // Ignore package.json write errors
+    }
+  }
+
   console.log('1. Optimizing Divine.png into an embedded Base64 Data URI...');
   const tempThumb = path.join(ROOT, 'public', 'divine-logo-thumb.png');
   try {
@@ -249,14 +298,24 @@ async function buildStandalone() {
   );
   console.log(`   Verified SSR output (${Math.round(prerenderedHtml.length / 1024)} KB of rendered DOM).`);
 
+  const buildId = `build-${Date.now()}`;
+  const builtAtStr = new Date().toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+
+  const buildMetaBootstrap = `window.__DIVINE_APP_VERSION__ = ${JSON.stringify(
+    nextVersion
+  )}; window.__DIVINE_BUILD_ID__ = ${JSON.stringify(
+    buildId
+  )}; window.__DIVINE_BUILT_AT__ = ${JSON.stringify(builtAtStr)};`;
+
   const standaloneHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Divine — AI Operations & Procurement Assistant | Sixth Sense Studio</title>
+  <title>Divine — AI Operations & Procurement Assistant | Sixth Sense Studio (v${nextVersion})</title>
   <link rel="icon" type="image/png" href="${logoBase64}" />
   <style>${cssResult.css}</style>
+  <script>${buildMetaBootstrap}</script>
 </head>
 <body class="min-h-screen antialiased bg-[#faf8f6] text-slate-900">
   <div id="root">${prerenderedHtml}</div>
@@ -268,11 +327,11 @@ async function buildStandalone() {
   fs.writeFileSync(outHtmlPath, standaloneHtml, 'utf8');
 
   const versionData = {
-    version: '1.1.0',
+    version: nextVersion,
+    buildId,
     repository: 'https://github.com/GeppyAi/devine2',
-    builtAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-    releaseNotes:
-      'Self-contained standalone build with GitHub Live Auto-Updater, PDF/CSV/File Upload, Bilingual EN/ES toggle, AI Chat Co-Pilot, and 6 Houzz Pro workflow guides.',
+    builtAt: builtAtStr,
+    releaseNotes: `v${nextVersion} — Self-contained standalone build with Auto-Incrementing Version Detection, GitHub Bug Relay -> GitBridge Auto-Fix Listener -> Republish to GitHub, Reset/Clear Test Data button, PDF/CSV/File Upload, Bilingual EN/ES toggle, AI Chat Co-Pilot, and 6 Houzz Pro workflow guides.`,
   };
   fs.writeFileSync(path.join(ROOT, 'version.json'), JSON.stringify(versionData, null, 2), 'utf8');
   fs.writeFileSync(
@@ -284,7 +343,7 @@ async function buildStandalone() {
   const readmePath = path.join(ROOT, 'README_HOW_TO_OPEN.txt');
   const readmeText = `========================================================================
 DIVINE — AI OPERATIONS & PROCUREMENT ASSISTANT (SIXTH SENSE STUDIO)
-SELF-CONTAINED PORTABLE APPLICATION (v1.1.0)
+SELF-CONTAINED PORTABLE APPLICATION (v${nextVersion})
 ========================================================================
 
 HOW TO USE THIS APP (NO INSTALLATION REQUIRED):
