@@ -120,6 +120,11 @@ async function buildStandalone() {
     'Lightbulb',
     'MessageSquarePlus',
     'X',
+    'Settings',
+    'Key',
+    'Eye',
+    'EyeOff',
+    'ChevronDown',
   ];
 
   const toKebab = (str) =>
@@ -311,13 +316,17 @@ async function buildStandalone() {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1c1917" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Divine — AI Operations & Procurement Assistant | Sixth Sense Studio (v${nextVersion})</title>
   <link rel="icon" type="image/png" href="${logoBase64}" />
+  <link rel="apple-touch-icon" href="${logoBase64}" />
   <style>${cssResult.css}</style>
   <script>${buildMetaBootstrap}</script>
 </head>
-<body class="min-h-screen antialiased bg-[#faf8f6] text-slate-900">
+<body class="min-h-screen antialiased bg-[#faf8f6] text-slate-900 overflow-x-hidden">
   <div id="root">${prerenderedHtml}</div>
   <script>${safeJs}</script>
 </body>

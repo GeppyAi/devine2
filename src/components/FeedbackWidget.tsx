@@ -870,7 +870,7 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
       />
 
       {/* Floating Action Button (Bottom-Right) */}
-      <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-2">
+      <div className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-40 flex flex-col items-end gap-2">
         <button
           type="button"
           onClick={() => setIsOpen(true)}
@@ -878,10 +878,10 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
             'Report a Bug, Request a Feature, or Trigger an Instant GitBridge Live Fix',
             'Reportar un Error (Bug), Solicitar Función o Ejecutar Corrección Instantánea con GitBridge'
           )}
-          className="group flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-stone-900 text-white hover:bg-stone-800 border-2 border-amber-400 shadow-xl transition-all hover:scale-[1.02] active:scale-[0.99]"
+          className="group flex items-center gap-2 sm:gap-2.5 px-3 py-2 sm:px-4 sm:py-3 rounded-2xl bg-stone-900 text-white hover:bg-stone-800 border-2 border-amber-400 shadow-xl transition-all hover:scale-[1.02] active:scale-[0.99]"
         >
-          <span className="relative flex items-center justify-center w-7 h-7 rounded-xl bg-amber-400 text-stone-950 shrink-0">
-            <MessageSquarePlus className="w-4 h-4" />
+          <span className="relative flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-amber-400 text-stone-950 shrink-0">
+            <MessageSquarePlus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             {bugCount > 0 && (
               <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center border border-stone-900">
                 {bugCount}
@@ -890,12 +890,15 @@ export function FeedbackWidget({ lang, activeTabLabel }: FeedbackWidgetProps) {
           </span>
           <div className="text-left">
             <div className="text-xs font-bold leading-tight flex items-center gap-1.5">
-              <span>{t('Report Bug / Feature / Note', 'Reportar Bug / Idea / Nota')}</span>
+              <span className="hidden sm:inline">
+                {t('Report Bug / Feature / Note', 'Reportar Bug / Idea / Nota')}
+              </span>
+              <span className="sm:hidden">{t('Feedback / Bug', 'Reporte')}</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 font-semibold">
                 {items.length}
               </span>
             </div>
-            <div className="text-[10px] text-stone-300 leading-tight flex items-center gap-1.5 mt-0.5">
+            <div className="hidden sm:flex text-[10px] text-stone-300 leading-tight items-center gap-1.5 mt-0.5">
               <span
                 className={`w-2 h-2 rounded-full ${
                   gitbridgeOnline ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'

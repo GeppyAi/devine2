@@ -46,9 +46,15 @@ import {
   Paperclip,
   Trash2,
   RefreshCw,
+  Settings,
+  Key,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  X,
 } from 'lucide-react';
 
-const APP_CURRENT_VERSION = '1.1.1';
+const APP_CURRENT_VERSION = '1.1.3';
 const GITHUB_REPO_SLUG = 'GeppyAi/devine2';
 const GITHUB_REPO_URL = 'https://github.com/GeppyAi/devine2';
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/GeppyAi/devine2/main';
@@ -105,7 +111,7 @@ const CLEAN_WELCOME_CHAT: { role: 'user' | 'divine'; statusBanner?: string; text
 const EMPTY_PAYROLL_PERIOD: PayrollPrepPeriod = {
   id: 'pay-period-clean',
   employeeName: 'W-2 Employee (Upload Timesheet to Populate)',
-  employeeType: 'W-2 (Single Employee)',
+  employeeRole: 'W-2 (Single Employee)',
   payPeriodStart: '—',
   payPeriodEnd: '—',
   payrollDeadline: 'Pending Timesheet Upload',
@@ -150,6 +156,18 @@ export default function DivineDashboard() {
   const [isCleanWorkspace, setIsCleanWorkspace] = useState<boolean>(false);
   const [showResetBanner, setShowResetBanner] = useState<boolean>(false);
 
+  // Top Header Settings Dropdown & AI API Keys State (Chat + General AI Features)
+  const [showSettingsDropdown, setShowSettingsDropdown] = useState<boolean>(false);
+  const settingsDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [aiProvider, setAiProvider] = useState<'gemini' | 'openai' | 'anthropic'>('gemini');
+  const [generalApiKey, setGeneralApiKey] = useState<string>('');
+  const [chatApiKey, setChatApiKey] = useState<string>('');
+  const [showGeneralKey, setShowGeneralKey] = useState<boolean>(false);
+  const [showChatKey, setShowChatKey] = useState<boolean>(false);
+  const [aiKeySaveNotice, setAiKeySaveNotice] = useState<string | null>(null);
+  const [isAiChatLoading, setIsAiChatLoading] = useState<boolean>(false);
+  const [isAiGeneralLoading, setIsAiGeneralLoading] = useState<boolean>(false);
+
   // Ingestion / AI Chat state
   const [ingestText, setIngestText] = useState('');
   const [selectedDocCategory, setSelectedDocCategory] = useState<string>('Auto-Detect');
@@ -162,6 +180,66 @@ export default function DivineDashboard() {
   const [chatHistory, setChatHistory] = useState<
     { role: 'user' | 'divine'; statusBanner?: string; text: string }[]
   >(INITIAL_SAMPLE_CHAT);
+
+  const hasActiveGeneralKey = Boolean(generalApiKey.trim() || chatApiKey.trim());
+  const hasActiveChatKey = Boolean(chatApiKey.trim() || generalApiKey.trim());
+
+  const saveAiSettingsToStorage = (
+    provider: 'gemini' | 'openai' | 'anthropic',
+    genKey: string,
+    cKey: string,
+    showFeedback = true
+  ) => {
+    try {
+      window.localStorage.setItem(
+        'divine_ai_settings_v1',
+        JSON.stringify({
+          provider,
+          generalApiKey: genKey.trim(),
+          chatApiKey: cKey.trim(),
+        })
+      );
+      if (showFeedback) {
+        setAiKeySaveNotice(
+          t(
+            'Saved locally! API keys are active for Chat & General AI features.',
+            '¡Guardado localmente! Las claves API están activas para el Chat y las funciones generales de IA.'
+          )
+        );
+        setTimeout(() => setAiKeySaveNotice(null), 3500);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  const clearSavedAiKeys = () => {
+    setGeneralApiKey('');
+    setChatApiKey('');
+    try {
+      window.localStorage.removeItem('divine_ai_settings_v1');
+    } catch {
+      // Ignore storage errors
+    }
+    setAiKeySaveNotice(
+      t('API keys cleared from local browser storage.', 'Claves API eliminadas del navegador.')
+    );
+    setTimeout(() => setAiKeySaveNotice(null), 3000);
+  };
+
+  // Close Settings dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        settingsDropdownRef.current &&
+        !settingsDropdownRef.current.contains(event.target as Node)
+      ) {
+        setShowSettingsDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Clear all test/demo data across every tab and the Feedback widget
   const clearAllTestData = (showNotification = true) => {
@@ -220,7 +298,7 @@ export default function DivineDashboard() {
         if (headEl && !docClone.innerHTML.includes('__DIVINE_DEFAULT_CLEAN__')) {
           const cleanScript = document.createElement('script');
           cleanScript.textContent =
-            'window.__DIVINE_DEFAULT_CLEAN__ = true; try { localStorage.setItem("divine_workspace_clean_mode", "clean"); localStorage.setItem("divine_redesign_feedback_v1", "[]"); } catch(e) {}';
+            'window.__DIVINE_DEFAULT_CLEAN__ = true; try { localStorage.setItem("divine_workspace_clean_mode", "clean"); localStorage.setItem("divine_redesign_feedback_v1", "[]"); localStorage.removeItem("divine_ai_settings_v1"); } catch(e) {}';
           headEl.insertBefore(cleanScript, headEl.firstChild);
         }
         const serializedHtml = '<!DOCTYPE html>\n' + docClone.outerHTML;
@@ -244,7 +322,7 @@ export default function DivineDashboard() {
     }, 80);
   };
 
-  // On mount, check if Clean Mode was saved or baked into the standalone HTML
+  // On mount, check if Clean Mode or saved AI API Keys exist in localStorage
   useEffect(() => {
     try {
       const savedMode = window.localStorage.getItem('divine_workspace_clean_mode');
@@ -253,6 +331,23 @@ export default function DivineDashboard() {
       );
       if (savedMode === 'clean' || (bakedClean && savedMode !== 'demo')) {
         clearAllTestData(false);
+      }
+      const savedAiRaw = window.localStorage.getItem('divine_ai_settings_v1');
+      if (savedAiRaw) {
+        const parsed = JSON.parse(savedAiRaw);
+        if (
+          parsed.provider === 'gemini' ||
+          parsed.provider === 'openai' ||
+          parsed.provider === 'anthropic'
+        ) {
+          setAiProvider(parsed.provider);
+        }
+        if (typeof parsed.generalApiKey === 'string') {
+          setGeneralApiKey(parsed.generalApiKey);
+        }
+        if (typeof parsed.chatApiKey === 'string') {
+          setChatApiKey(parsed.chatApiKey);
+        }
       }
     } catch {
       // Ignore storage errors
@@ -357,7 +452,140 @@ export default function DivineDashboard() {
     });
   };
 
-  const handleChatSubmit = (e: React.FormEvent) => {
+  // Core AI Caller for both Divine AI Chat ('chat') and General AI Features ('general')
+  const callDivineAI = async (
+    userPrompt: string,
+    mode: 'chat' | 'general'
+  ): Promise<string | null> => {
+    const rawKey =
+      mode === 'chat'
+        ? chatApiKey.trim() || generalApiKey.trim()
+        : generalApiKey.trim() || chatApiKey.trim();
+    if (!rawKey) return null;
+
+    // Auto-detect provider from key prefix if obvious, else use selected aiProvider
+    let providerToUse = aiProvider;
+    if (rawKey.startsWith('AIza')) providerToUse = 'gemini';
+    else if (rawKey.startsWith('sk-ant-')) providerToUse = 'anthropic';
+    else if (rawKey.startsWith('sk-')) providerToUse = 'openai';
+
+    const workspaceContext = [
+      `Open Procurement Orders (${orders.length}): ${orders
+        .map(
+          (o) =>
+            `${o.draftPo?.poNumber || o.id} (${o.vendorName} - ${o.itemName}, Status: ${
+              o.verificationStatus
+            }, Discrepancies: ${
+              o.discrepancies.map((d) => `${d.field}: ${d.actualValue}`).join('; ') || 'None'
+            })`
+        )
+        .join(' | ')}`,
+      `Payment Packets (${paymentPackets.length}): ${paymentPackets
+        .map(
+          (p) =>
+            `${p.invoiceNumber} (${p.vendorName}, $${p.invoiceAmount}, Flags: ${
+              p.discrepancySummary.join('; ') || 'None'
+            })`
+        )
+        .join(' | ')}`,
+      `Payroll Period (${payroll.employeeName}, ${payroll.payPeriodStart} to ${payroll.payPeriodEnd}): Reg=${payroll.totalRegularHours}h, OT=${payroll.totalOvertimeHours}h, Flags=${payroll.flaggedGapsAndAnomalies.join('; ') || 'None'}`,
+      `Houzz Workflows Indexed: ${HOUZZ_PRO_KNOWLEDGE_BASE.map((h) => `${h.title} (${h.navigationPath})`).join(', ')}`,
+    ].join('\n');
+
+    const systemInstruction = `You are Divine, the preparation and organization AI assistant for Sixth Sense Studio (Interior Design).
+NON-NEGOTIABLE STUDIO RULES:
+1. STRICT AIR-GAP: You never send emails, contact vendors/clients, submit POs, approve actions, send Zelle payments, or submit QuickBooks payroll. All outputs are copy-ready drafts for human review.
+2. MANDATORY STATUS FRAMING: Every draft, comparison, or recommendation is a working draft [DRAFT — NEEDS HUMAN VERIFICATION].
+3. OUT-OF-SCOPE FINANCIAL GUARDRAILS: Never perform bookkeeping, general ledger review, bank reconciliations, month-end close, tax calculations/filings, or client collections/payments.
+4. PAYMENT DISCLAIMER: Whenever discussing vendor payments or Zelle, remind the user: "A comparison performed by Divine is not confirmation that a payment is safe or approved. You must verify the invoice, project, recipient, and amount, obtain Meliza’s written approval, send any Zelle payment yourself, and save the confirmation."
+5. LANGUAGE: Respond in ${lang === 'es' ? 'Spanish (Español)' : 'English'}.
+
+CURRENT WORKSPACE CONTEXT:
+${workspaceContext}`;
+
+    try {
+      if (providerToUse === 'gemini') {
+        const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+        for (const modelName of models) {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(
+              rawKey
+            )}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+                generationConfig: { temperature: 0.25 },
+              }),
+            }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (reply) return String(reply).trim();
+          }
+        }
+        throw new Error('Gemini API request failed — please check your API key in Settings.');
+      }
+
+      if (providerToUse === 'openai') {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${rawKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: systemInstruction },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.25,
+          }),
+        });
+        if (!res.ok) {
+          throw new Error('OpenAI API request failed — please check your API key in Settings.');
+        }
+        const data = await res.json();
+        const reply = data?.choices?.[0]?.message?.content;
+        return reply ? String(reply).trim() : null;
+      }
+
+      if (providerToUse === 'anthropic') {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': rawKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-3-5-sonnet-latest',
+            max_tokens: 1024,
+            system: systemInstruction,
+            messages: [{ role: 'user', content: userPrompt }],
+          }),
+        });
+        if (!res.ok) {
+          throw new Error('Anthropic API request failed — please check your API key in Settings.');
+        }
+        const data = await res.json();
+        const reply = data?.content?.[0]?.text;
+        return reply ? String(reply).trim() : null;
+      }
+    } catch (err) {
+      return `[AI Connection Notice: ${
+        err instanceof Error ? err.message : 'Unable to reach AI provider'
+      }]`;
+    }
+    return null;
+  };
+
+  const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
     const query = chatInput.trim();
@@ -365,7 +593,7 @@ export default function DivineDashboard() {
 
     const userMsg = { role: 'user' as const, text: query };
 
-    // Out-of-scope & Firm Limit Guardrail Engine
+    // Out-of-scope & Firm Limit Guardrail Engine (Always enforced first)
     if (
       lower.includes('reconcil') ||
       lower.includes('general ledger') ||
@@ -407,6 +635,27 @@ export default function DivineDashboard() {
       ]);
       setChatInput('');
       return;
+    }
+
+    setChatInput('');
+
+    // If user configured a Chat API Key (or General AI API Key), call live AI with full studio guardrails
+    if (hasActiveChatKey) {
+      setChatHistory((prev) => [...prev, userMsg]);
+      setIsAiChatLoading(true);
+      const aiReply = await callDivineAI(query, 'chat');
+      setIsAiChatLoading(false);
+      if (aiReply && !aiReply.startsWith('[AI Connection Notice:')) {
+        setChatHistory((prev) => [
+          ...prev,
+          {
+            role: 'divine',
+            statusBanner: 'STATUS: AI DRAFT RESPONSE — NEEDS HUMAN VERIFICATION',
+            text: aiReply,
+          },
+        ]);
+        return;
+      }
     }
 
     // Houzz Pro Knowledge Base Queries (Product Library, Selections Tracker, Create/Merge POs, Manage Vendors)
@@ -454,8 +703,7 @@ export default function DivineDashboard() {
         .join('\n\n');
 
       setChatHistory((prev) => [
-        ...prev,
-        userMsg,
+        ...(hasActiveChatKey ? prev : [...prev, userMsg]),
         {
           role: 'divine',
           statusBanner: 'STATUS: HOUZZ PRO WORKFLOW GUIDE — FOR HUMAN VERIFICATION',
@@ -466,28 +714,50 @@ export default function DivineDashboard() {
           }`,
         },
       ]);
-      setChatInput('');
       return;
     }
 
     // Standard helpful draft / comparison response
     setChatHistory((prev) => [
-      ...prev,
-      userMsg,
+      ...(hasActiveChatKey ? prev : [...prev, userMsg]),
       {
         role: 'divine',
         statusBanner: 'STATUS: DRAFT — NEEDS HUMAN VERIFICATION',
         text:
           orders.length === 0 && paymentPackets.length === 0 && uploadedFiles.length === 0
-            ? `Your workspace is currently fresh with 0 test records.\n\nTo have me prepare a 3-way procurement match, Houzz Pro tracker update, vendor payment approval packet, or W-2 hours summary:\n1. Click "Upload PDF / File" below to attach your source document (PDF, CSV, XLSX, or Image), or\n2. Paste the quote, PO, acknowledgment, invoice, or timesheet text in the Source Document panel on the right.`
-            : `I have prepared the requested draft analysis based on your current Sixth Sense Studio source records:\n\n• Open Orders Tracked: ${orders.length}\n• Uploaded Source Documents: ${uploadedFiles.length}\n• Pending Vendor Payment Packets: ${paymentPackets.length}\n• Draft Communications Queued: ${drafts.length}\n\nReminder: Please check all values against original source PDFs before copying or taking action.`,
+            ? `Your workspace is currently fresh with 0 test records.\n\nTo have me prepare a 3-way procurement match, Houzz Pro tracker update, vendor payment approval packet, or W-2 hours summary:\n1. Click "Upload PDF / File" below to attach your source document (PDF, CSV, XLSX, or Image), or\n2. Paste the quote, PO, acknowledgment, invoice, or timesheet text in the Source Document panel on the right.${
+                !hasActiveChatKey
+                  ? '\n3. Tip: Click "Settings" (top-right) to add your AI API Key for live AI chat & document analysis.'
+                  : ''
+              }`
+            : `I have prepared the requested draft analysis based on your current Sixth Sense Studio source records:\n\n• Open Orders Tracked: ${orders.length}\n• Uploaded Source Documents: ${uploadedFiles.length}\n• Pending Vendor Payment Packets: ${paymentPackets.length}\n• Draft Communications Queued: ${drafts.length}\n\nReminder: Please check all values against original source PDFs before copying or taking action.${
+                !hasActiveChatKey
+                  ? '\n\n(Tip: Open the top-right Settings menu to enter an API Key for live AI generation.)'
+                  : ''
+              }`,
       },
     ]);
-    setChatInput('');
   };
 
-  const handleIngestSource = () => {
+  const handleIngestSource = async () => {
     if (!ingestText.trim()) return;
+    const rawSnippet = ingestText.trim();
+    setIngestText('');
+
+    let aiExtractedBody = `DRAFT — NEEDS HUMAN VERIFICATION\n\nSource Snippet Analyzed:\n"${rawSnippet.slice(0, 280)}"\n\nDivine Preliminary Comparison Notes:\n- Checked against locked project specifications and open POs.\n- Status remains UNVERIFIED until checked against the original vendor PDF.\n- Do not treat this extraction as confirmation of approval or payment safety.`;
+
+    if (hasActiveGeneralKey) {
+      setIsAiGeneralLoading(true);
+      const aiResult = await callDivineAI(
+        `Analyze this pasted source document text against Sixth Sense Studio's open orders, specifications, Houzz tracker, or W-2 payroll rules. Extract key SKUs, finishes, quantities, prices, freight, ETAs, or hours anomalies, and prepare a copy-ready vendor/internal follow-up draft marked [DRAFT — NEEDS HUMAN VERIFICATION]:\n\n${rawSnippet}`,
+        'general'
+      );
+      setIsAiGeneralLoading(false);
+      if (aiResult && !aiResult.startsWith('[AI Connection Notice:')) {
+        aiExtractedBody = `DRAFT — NEEDS HUMAN VERIFICATION (AI-Extracted Analysis)\n\n${aiResult}\n\nMandatory Reminder: Verify all extracted figures against the original source document before taking action.`;
+      }
+    }
+
     const newDraft: DraftCommunication = {
       id: `dr-${Date.now()}`,
       category: 'Updated ETA Request',
@@ -495,12 +765,38 @@ export default function DivineDashboard() {
       projectName: 'Coral Gables Residence — Castellanos',
       recipientRole: 'Human Review Queue',
       subjectLine: '[DRAFT — NEEDS VERIFICATION] Extracted Document Comparison & Follow-up',
-      bodyText: `DRAFT — NEEDS HUMAN VERIFICATION\n\nSource Snippet Analyzed:\n"${ingestText.slice(0, 220)}..."\n\nDivine Preliminary Comparison Notes:\n- Checked against locked project specifications and open POs.\n- Status remains UNVERIFIED until checked against the original vendor PDF.\n- Do not treat this extraction as confirmation of approval or payment safety.`,
+      bodyText: aiExtractedBody,
       verificationStatus: 'NEEDS_KELDIA_VERIFICATION',
     };
     setDrafts((prev) => [newDraft, ...prev]);
-    setIngestText('');
-    alert('Source text parsed into a new Draft item marked [Needs Human Verification].');
+  };
+
+  // General AI Feature: Smart Workspace Discrepancy & Follow-Up Draft Generator
+  const handleRunGeneralAiDraftAnalysis = async () => {
+    if (!hasActiveGeneralKey) {
+      setShowSettingsDropdown(true);
+      return;
+    }
+    setIsAiGeneralLoading(true);
+    const aiResult = await callDivineAI(
+      `Review all current open procurement orders, payment packets, and payroll flags in the workspace. Generate a concise, copy-ready executive summary & vendor follow-up action draft marked [DRAFT — NEEDS HUMAN VERIFICATION] highlighting every SKU/finish mismatch, freight overage, delivery damage, missing compliance doc, and timesheet anomaly requiring human verification and Meliza's written approval.`,
+      'general'
+    );
+    setIsAiGeneralLoading(false);
+    if (aiResult) {
+      const newDraft: DraftCommunication = {
+        id: `dr-ai-${Date.now()}`,
+        category: 'Updated ETA Request',
+        relatedEntityName: 'General AI Workspace Audit & Follow-Up Packet',
+        projectName: 'Sixth Sense Studio — All Active Projects',
+        recipientRole: 'Reviewer & Meliza Review Queue',
+        subjectLine: '[DRAFT — NEEDS HUMAN VERIFICATION] AI-Generated Discrepancy & Action Summary',
+        bodyText: `[STATUS: DRAFT — NEEDS HUMAN VERIFICATION]\n\n${aiResult}`,
+        verificationStatus: 'NEEDS_KELDIA_VERIFICATION',
+      };
+      setDrafts((prev) => [newDraft, ...prev]);
+      setActiveTab('assistant');
+    }
   };
 
   const detectDocumentCategory = (fileName: string): string => {
@@ -540,7 +836,23 @@ export default function DivineDashboard() {
       const category = detectDocumentCategory(file.name);
       const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      const finishIngestion = (snippetText: string) => {
+      const finishIngestion = async (snippetText: string, rawFileContent?: string) => {
+        let finalPreview = snippetText;
+        if (hasActiveGeneralKey && rawFileContent) {
+          setIsAiGeneralLoading(true);
+          const aiDocSummary = await callDivineAI(
+            `Analyze this uploaded ${category} file ("${file.name}") for Sixth Sense Studio. Extract key SKUs, prices, freight, dates, or hours and flag any discrepancies against open POs or studio rules (3-4 sentences max, marked DRAFT — NEEDS HUMAN VERIFICATION):\n\n${rawFileContent.slice(
+              0,
+              3000
+            )}`,
+            'general'
+          );
+          setIsAiGeneralLoading(false);
+          if (aiDocSummary && !aiDocSummary.startsWith('[AI Connection Notice:')) {
+            finalPreview = aiDocSummary;
+          }
+        }
+
         const fileId = `uf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const newUploadedFile: UploadedSourceFile = {
           id: fileId,
@@ -548,7 +860,7 @@ export default function DivineDashboard() {
           sizeLabel: `${sizeKb} KB`,
           docCategory: category,
           uploadedAt: `Today, ${timeNow}`,
-          extractedPreview: snippetText,
+          extractedPreview: finalPreview,
           status: 'NEEDS_KELDIA_VERIFICATION',
         };
 
@@ -561,7 +873,7 @@ export default function DivineDashboard() {
           projectName: 'Sixth Sense Studio — Active Project Queue',
           recipientRole: 'Human Verification Queue',
           subjectLine: `[DRAFT — NEEDS HUMAN VERIFICATION] Uploaded File Analysis: ${file.name}`,
-          bodyText: `[STATUS: DRAFT — NEEDS HUMAN VERIFICATION]\nUploaded File: ${file.name} (${sizeKb} KB)\nDetected Document Type: ${category}\n\nExtracted Summary / Preview:\n${snippetText}\n\nMandatory Verification Steps:\n1. Verify extracted SKU, finish, quantity, unit price, freight, and dates against the original ${file.name} file.\n2. Confirm whether any Houzz Pro Tracker update or Vendor Payment Packet update is required.\n3. Obtain Meliza's written approval before any payment or payroll action.`,
+          bodyText: `[STATUS: DRAFT — NEEDS HUMAN VERIFICATION]\nUploaded File: ${file.name} (${sizeKb} KB)\nDetected Document Type: ${category}\n\nExtracted Summary / Preview:\n${finalPreview}\n\nMandatory Verification Steps:\n1. Verify extracted SKU, finish, quantity, unit price, freight, and dates against the original ${file.name} file.\n2. Confirm whether any Houzz Pro Tracker update or Vendor Payment Packet update is required.\n3. Obtain Meliza's written approval before any payment or payroll action.`,
           verificationStatus: 'NEEDS_KELDIA_VERIFICATION',
         };
 
@@ -576,7 +888,7 @@ export default function DivineDashboard() {
           {
             role: 'divine',
             statusBanner: 'STATUS: DOCUMENT UPLOADED — DRAFT NEEDS HUMAN VERIFICATION',
-            text: `I have ingested "${file.name}" (${category}, ${sizeKb} KB) into your local Air-Gapped workspace.\n\n• Extracted Preview: ${snippetText}\n• Action Taken: Added a watermarked comparison & verification draft to your Draft Queue (Marked: Draft — Needs Human Verification).\n• Reminder: Please verify all extracted numbers, SKUs, finishes, and dates directly against "${file.name}" before updating Houzz Pro or preparing a payment packet.`,
+            text: `I have ingested "${file.name}" (${category}, ${sizeKb} KB) into your local Air-Gapped workspace.\n\n• Extracted Preview: ${finalPreview}\n• Action Taken: Added a watermarked comparison & verification draft to your Draft Queue (Marked: Draft — Needs Human Verification).\n• Reminder: Please verify all extracted numbers, SKUs, finishes, and dates directly against "${file.name}" before updating Houzz Pro or preparing a payment packet.`,
           },
         ]);
       };
@@ -593,7 +905,7 @@ export default function DivineDashboard() {
           const preview = raw
             ? `Read ${raw.split(/\r?\n/).length} lines from ${file.name}: "${raw.slice(0, 180).replace(/\s+/g, ' ')}..."`
             : `Parsed structured text/CSV from ${file.name} for 3-way procurement & budget comparison.`;
-          finishIngestion(preview);
+          finishIngestion(preview, raw);
         };
         reader.readAsText(file);
       } else {
@@ -825,9 +1137,9 @@ export default function DivineDashboard() {
         className="hidden"
       />
       {/* Top Mandatory Air-Gap & Firm Limits Security Bar */}
-      <div className="bg-slate-900 text-amber-100 px-6 py-2.5 text-xs border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
+      <div className="bg-slate-900 text-amber-100 px-3 sm:px-6 py-1.5 sm:py-2.5 text-[11px] sm:text-xs border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-medium">
-          <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+          <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
           <span>
             <strong>
               {t('STRICT AIR-GAP MODE:', 'MODO DE AISLAMIENTO ESTRICTO (AIR-GAP):')}
@@ -838,7 +1150,7 @@ export default function DivineDashboard() {
             )}
           </span>
         </div>
-        <div className="flex items-center gap-4 text-slate-300">
+        <div className="hidden md:flex items-center gap-4 text-slate-300">
           <span>
             {t('All outputs are', 'Todos los resultados son')}{' '}
             <strong>{t('Working Drafts', 'Borradores de Trabajo')}</strong>
@@ -852,27 +1164,30 @@ export default function DivineDashboard() {
         </div>
       </div>
 
-      {/* Main Header */}
-      <header className="bg-white border-b border-stone-200 px-6 py-4 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3.5">
+      {/* Main Header (Mobile-First Sticky Top Bar + Swipeable Tab Bar) */}
+      <header className="bg-white border-b border-stone-200 px-3 sm:px-6 py-2.5 sm:py-3.5 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-7xl mx-auto space-y-2.5">
+          {/* Top Row: Brand Logo/Title on Left + Settings Dropdown Button on Right */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0">
               <img
                 src="/divine-logo.png"
                 alt="Divine AI Logo"
-                className="w-12 h-12 rounded-xl object-cover shadow-md border border-stone-300 shrink-0"
+                className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl object-cover shadow-md border border-stone-300 shrink-0"
               />
-              <div>
-                <h1 className="text-xl font-bold tracking-tight text-stone-900 flex items-center gap-2">
-                  {t(
-                    'Divine — AI Operations & Procurement Assistant',
-                    'Divine — Asistente IA de Operaciones y Compras'
-                  )}
-                  <span className="text-xs font-medium px-2.5 py-0.5 rounded-md bg-stone-100 text-stone-700 border border-stone-300">
+              <div className="min-w-0">
+                <h1 className="text-sm sm:text-lg font-bold tracking-tight text-stone-900 flex flex-wrap items-center gap-1.5 sm:gap-2 truncate">
+                  <span className="truncate">
+                    {t(
+                      'Divine — AI Operations & Procurement',
+                      'Divine — Asistente IA de Operaciones'
+                    )}
+                  </span>
+                  <span className="hidden sm:inline-block text-xs font-medium px-2 py-0.5 rounded-md bg-stone-100 text-stone-700 border border-stone-300 shrink-0">
                     Sixth Sense Studio
                   </span>
                 </h1>
-                <p className="text-xs text-stone-500">
+                <p className="hidden sm:block text-xs text-stone-500 truncate">
                   {t(
                     'Procurement • Houzz Pro Tracker & Budgets • Vendor-Payment Prep • W-2 Payroll Prep • Daily/Weekly/Monthly Logs',
                     'Compras y Logística • Rastreador y Presupuestos Houzz Pro • Preparación de Pagos • Preparación de Nómina W-2 • Registros y Reportes'
@@ -880,157 +1195,391 @@ export default function DivineDashboard() {
                 </p>
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* One-Click Reset / Clear All Test Data Button */}
-            {!isCleanWorkspace ? (
+            {/* Consolidated Top-Bar Settings Dropdown (AI API Keys, Language, GitHub Updates, Reset/Clean Data) */}
+            <div ref={settingsDropdownRef} className="relative shrink-0">
               <button
                 type="button"
-                onClick={() => clearAllTestData(true)}
+                onClick={() => setShowSettingsDropdown((prev) => !prev)}
                 title={t(
-                  'Clear all sample/test data across all tabs so you can send or start a fresh workspace',
-                  'Eliminar todos los datos de prueba en todas las pestañas para iniciar o enviar un espacio limpio'
+                  'Open Settings: AI API Keys (Chat & General AI), Language, GitHub Updates & Workspace Reset',
+                  'Abrir Ajustes: Claves API de IA (Chat e IA General), Idioma, Actualizaciones y Datos'
                 )}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border border-red-300 bg-red-50 text-red-900 hover:bg-red-100 transition shadow-sm"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs font-bold border border-stone-300 bg-stone-900 text-white hover:bg-stone-800 transition shadow-sm"
               >
-                <Trash2 className="w-3.5 h-3.5 text-red-700" />
-                <span>{t('Reset / Clear All Test Data', 'Reiniciar / Limpiar Datos de Prueba')}</span>
+                <Settings className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{t('Settings', 'Ajustes')}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                    hasActiveGeneralKey || hasActiveChatKey
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
+                      : 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                  }`}
+                >
+                  {hasActiveGeneralKey || hasActiveChatKey
+                    ? t('AI Active', 'IA Activa')
+                    : t('AI Key', 'Clave IA')}
+                </span>
+                {remoteVersionInfo?.hasNewerVersion && (
+                  <span
+                    className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"
+                    title={t('GitHub Update Available', 'Actualización disponible')}
+                  />
+                )}
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-stone-300 transition-transform ${
+                    showSettingsDropdown ? 'rotate-180' : ''
+                  }`}
+                />
               </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={downloadFreshStandaloneHtml}
-                  title={t(
-                    'Download a clean standalone HTML copy with all test data removed to send to your team',
-                    'Descargar copia HTML independiente limpia sin datos de prueba para enviar al equipo'
-                  )}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-emerald-400 bg-emerald-50 text-emerald-950 hover:bg-emerald-100 transition shadow-sm"
-                >
-                  <Download className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>{t('Download Fresh HTML to Send', 'Descargar HTML Limpio')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={restoreSampleDemoData}
-                  title={t(
-                    'Restore sample demo data for testing or training',
-                    'Restaurar datos de demostración para pruebas o entrenamiento'
-                  )}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border border-stone-300 bg-stone-100 text-stone-700 hover:bg-stone-200 transition"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 text-stone-600" />
-                  <span>{t('Load Demo Data', 'Cargar Demo')}</span>
-                </button>
-              </div>
-            )}
 
-            {/* GitHub Auto-Update Button (https://github.com/GeppyAi/devine2) */}
-            <button
-              onClick={checkForGitHubUpdates}
-              title={t(
-                'Check & pull the latest Divine app update from github.com/GeppyAi/devine2',
-                'Comprobar y descargar la última versión de Divine desde github.com/GeppyAi/devine2'
+              {showSettingsDropdown && (
+                <>
+                  {/* Mobile Backdrop */}
+                  <div
+                    onClick={() => setShowSettingsDropdown(false)}
+                    className="fixed inset-0 bg-black/30 z-40 sm:hidden"
+                  />
+                  <div className="fixed inset-x-2.5 top-16 sm: inset-x-auto sm:absolute sm:right-0 sm:top-auto sm:mt-2 sm:w-[430px] max-h-[82vh] overflow-y-auto rounded-2xl bg-white border border-stone-300 shadow-2xl z-50 p-4 space-y-4 text-xs">
+                  {/* Dropdown Header */}
+                  <div className="flex items-center justify-between border-b border-stone-200 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-amber-700" />
+                      <span className="font-bold text-sm text-stone-900">
+                        {t('Settings, AI Keys & Controls', 'Ajustes, Claves IA y Controles')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSettingsDropdown(false)}
+                      className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Section 1: AI & API Key Configuration (Chat & General AI Features) */}
+                  <div className="bg-stone-50 border border-stone-200 rounded-xl p-3.5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                        <Key className="w-3.5 h-3.5 text-amber-700" />
+                        <span>
+                          {t(
+                            'AI API Keys (Chat & General AI Features)',
+                            'Claves API de IA (Chat y Funciones Generales)'
+                          )}
+                        </span>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          hasActiveGeneralKey || hasActiveChatKey
+                            ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300'
+                        }`}
+                      >
+                        {hasActiveGeneralKey || hasActiveChatKey
+                          ? t('Configured Locally', 'Configurada Localmente')
+                          : t('No Key Set', 'Sin Clave')}
+                      </span>
+                    </div>
+
+                    {/* Provider Selector */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-stone-700">
+                        {t('AI Provider / Model:', 'Proveedor / Modelo de IA:')}
+                      </label>
+                      <select
+                        value={aiProvider}
+                        onChange={(e) => {
+                          const nextProv = e.target.value as 'gemini' | 'openai' | 'anthropic';
+                          setAiProvider(nextProv);
+                          saveAiSettingsToStorage(nextProv, generalApiKey, chatApiKey, false);
+                        }}
+                        className="w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900"
+                      >
+                        <option value="gemini">
+                          Google Gemini (gemini-2.5-flash / gemini-2.0-flash)
+                        </option>
+                        <option value="openai">OpenAI (gpt-4o-mini / ChatGPT)</option>
+                        <option value="anthropic">Anthropic Claude (claude-3-5-sonnet)</option>
+                      </select>
+                    </div>
+
+                    {/* General AI Features API Key */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-stone-800">
+                        {t(
+                          '1. General AI Features API Key (Document Parsing, 3-Way Match & Drafts):',
+                          '1. Clave API para Funciones Generales de IA (Documentos, Comparación y Borradores):'
+                        )}
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type={showGeneralKey ? 'text' : 'password'}
+                          value={generalApiKey}
+                          onChange={(e) => setGeneralApiKey(e.target.value)}
+                          placeholder={t(
+                            'Paste API Key (AIza..., sk-..., or sk-ant-...)',
+                            'Pegue su Clave API (AIza..., sk-... o sk-ant-...)'
+                          )}
+                          className="flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-stone-900"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowGeneralKey((prev) => !prev)}
+                          title={t('Show/Hide General AI Key', 'Mostrar/Ocultar Clave')}
+                          className="p-1.5 rounded-lg border border-stone-300 bg-white text-stone-600 hover:text-stone-900"
+                        >
+                          {showGeneralKey ? (
+                            <EyeOff className="w-3.5 h-3.5" />
+                          ) : (
+                            <Eye className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Chat AI API Key */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-stone-800">
+                        {t(
+                          '2. Chat Assistant API Key (Optional — uses General AI Key if blank):',
+                          '2. Clave API para el Chat (Opcional — usa la Clave General si se deja vacía):'
+                        )}
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type={showChatKey ? 'text' : 'password'}
+                          value={chatApiKey}
+                          onChange={(e) => setChatApiKey(e.target.value)}
+                          placeholder={t(
+                            'Leave blank to share General AI Key, or paste separate Chat key...',
+                            'Deje vacío para usar la Clave General, o pegue una clave para el Chat...'
+                          )}
+                          className="flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-stone-900"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowChatKey((prev) => !prev)}
+                          title={t('Show/Hide Chat Key', 'Mostrar/Ocultar Clave')}
+                          className="p-1.5 rounded-lg border border-stone-300 bg-white text-stone-600 hover:text-stone-900"
+                        >
+                          {showChatKey ? (
+                            <EyeOff className="w-3.5 h-3.5" />
+                          ) : (
+                            <Eye className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          saveAiSettingsToStorage(aiProvider, generalApiKey, chatApiKey, true)
+                        }
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-stone-900 text-white font-bold hover:bg-stone-800 inline-flex items-center justify-center gap-1.5"
+                      >
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        {t('Save API Keys Locally', 'Guardar Claves Localmente')}
+                      </button>
+                      {(generalApiKey || chatApiKey) && (
+                        <button
+                          type="button"
+                          onClick={clearSavedAiKeys}
+                          className="px-2.5 py-1.5 rounded-lg border border-red-300 bg-red-50 text-red-800 font-semibold hover:bg-red-100"
+                        >
+                          {t('Clear', 'Borrar')}
+                        </button>
+                      )}
+                    </div>
+
+                    {aiKeySaveNotice && (
+                      <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">
+                        {aiKeySaveNotice}
+                      </div>
+                    )}
+
+                    <p className="text-[10px] text-stone-500 leading-snug">
+                      {t(
+                        'Stored 100% locally in your browser. All AI outputs remain governed by Sixth Sense Studio Air-Gap & Human Verification rules.',
+                        'Guardadas 100% localmente en su navegador. Todas las respuestas de IA mantienen el aislamiento Air-Gap y revisión humana.'
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Section 2: Interface Language Switcher */}
+                  <div className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-xl p-3">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-amber-800" />
+                      <div>
+                        <div className="font-bold text-stone-900">
+                          {t('Interface Language', 'Idioma de la Interfaz')}
+                        </div>
+                        <div className="text-[11px] text-stone-500">
+                          {lang === 'en' ? 'Currently English (EN)' : 'Actualmente Español (ES)'}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLang((prev) => (prev === 'en' ? 'es' : 'en'))}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-400 bg-amber-50 text-stone-900 hover:bg-amber-100 transition"
+                    >
+                      <span>{lang === 'en' ? 'Switch to Español (ES)' : 'Cambiar a English (EN)'}</span>
+                    </button>
+                  </div>
+
+                  {/* Section 3: GitHub App Updates */}
+                  <div className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-xl p-3">
+                    <div>
+                      <div className="font-bold text-stone-900 flex items-center gap-1.5">
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${
+                            remoteVersionInfo?.hasNewerVersion
+                              ? 'text-emerald-600 animate-spin'
+                              : 'text-amber-700'
+                          }`}
+                        />
+                        <span>
+                          {t('App Version & Updates', 'Versión y Actualizaciones')} (v
+                          {getInstalledVersion()})
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-stone-500">
+                        {remoteVersionInfo?.hasNewerVersion
+                          ? t(
+                              `New version v${remoteVersionInfo.version} available on GitHub`,
+                              `Nueva versión v${remoteVersionInfo.version} disponible en GitHub`
+                            )
+                          : `github.com/${GITHUB_REPO_SLUG}`}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSettingsDropdown(false);
+                        checkForGitHubUpdates();
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                        remoteVersionInfo?.hasNewerVersion
+                          ? 'border-emerald-400 bg-emerald-800 text-white hover:bg-emerald-700'
+                          : 'border-stone-300 bg-stone-900 text-white hover:bg-stone-800'
+                      }`}
+                    >
+                      {remoteVersionInfo?.hasNewerVersion
+                        ? t(`Update to v${remoteVersionInfo.version}`, `Actualizar v${remoteVersionInfo.version}`)
+                        : t('Check GitHub', 'Buscar Actualización')}
+                    </button>
+                  </div>
+
+                  {/* Section 4: Workspace Test Data & Clean HTML Export */}
+                  <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 space-y-2">
+                    <div className="font-bold text-stone-900">
+                      {t('Workspace Data & Clean Export', 'Datos de Prueba y Exportación Limpia')}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!isCleanWorkspace ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            clearAllTestData(true);
+                            setShowSettingsDropdown(false);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-red-300 bg-red-50 text-red-900 hover:bg-red-100 transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-700" />
+                          <span>
+                            {t('Reset / Clear All Test Data', 'Reiniciar / Limpiar Datos de Prueba')}
+                          </span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              downloadFreshStandaloneHtml();
+                              setShowSettingsDropdown(false);
+                            }}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-emerald-400 bg-emerald-50 text-emerald-950 hover:bg-emerald-100 transition"
+                          >
+                            <Download className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>{t('Download Fresh HTML', 'Descargar HTML Limpio')}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              restoreSampleDemoData();
+                              setShowSettingsDropdown(false);
+                            }}
+                            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-stone-300 bg-white text-stone-700 hover:bg-stone-100 transition"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 text-stone-600" />
+                            <span>{t('Load Demo Data', 'Cargar Demo')}</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                </>
               )}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition shadow-sm ${
-                remoteVersionInfo?.hasNewerVersion
-                  ? 'border-emerald-400 bg-emerald-800 text-white hover:bg-emerald-700 ring-2 ring-emerald-400/50'
-                  : 'border-stone-300 bg-stone-900 text-white hover:bg-stone-800'
-              }`}
-            >
-              <RefreshCw
-                className={`w-3.5 h-3.5 ${
-                  remoteVersionInfo?.hasNewerVersion ? 'text-emerald-300 animate-spin' : 'text-amber-400'
-                } ${updateChecking ? 'animate-spin' : ''}`}
-              />
-              <span>
-                {remoteVersionInfo?.hasNewerVersion
-                  ? t(
-                      `Update Available: v${remoteVersionInfo.version}`,
-                      `Actualización Lista: v${remoteVersionInfo.version}`
-                    )
-                  : t('Update from GitHub', 'Actualizar desde GitHub')}
-              </span>
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                  remoteVersionInfo?.hasNewerVersion
-                    ? 'bg-emerald-400 text-stone-950 border-emerald-200 font-extrabold'
-                    : 'bg-amber-400/20 text-amber-300 border-amber-400/30'
-                }`}
-              >
-                {remoteVersionInfo?.hasNewerVersion
-                  ? `v${getInstalledVersion()} → v${remoteVersionInfo.version}`
-                  : `v${getInstalledVersion()}`}
-              </span>
-            </button>
-
-            {/* Bilingual Language Switcher Button (English <-> Español) */}
-            <button
-              onClick={() => setLang((prev) => (prev === 'en' ? 'es' : 'en'))}
-              title={t('Switch interface language to Spanish', 'Cambiar idioma de la interfaz a Inglés')}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-400 bg-amber-50 text-stone-900 hover:bg-amber-100 transition shadow-sm"
-            >
-              <Globe className="w-4 h-4 text-amber-800" />
-              <span>{lang === 'en' ? 'ESPAÑOL (ES)' : 'ENGLISH (EN)'}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-900 text-amber-200">
-                {lang === 'en' ? 'EN → ES' : 'ES → EN'}
-              </span>
-            </button>
-
-            {/* Navigation Pills */}
-            <nav className="flex flex-wrap gap-1.5 bg-stone-100 p-1.5 rounded-xl border border-stone-200">
-              {[
-                {
-                  id: 'overview',
-                  label: t('5. Logs, Reminders & EOD', '5. Registros, Recordatorios y Cierre'),
-                  icon: ClipboardCheck,
-                },
-                {
-                  id: 'procurement',
-                  label: t('1. Procurement & Mafer', '1. Compras y Mafer'),
-                  icon: Truck,
-                },
-                {
-                  id: 'houzz',
-                  label: t('2. Houzz & Budgets', '2. Houzz y Presupuestos'),
-                  icon: FileSpreadsheet,
-                },
-                {
-                  id: 'payments',
-                  label: t('3. Vendor Payment Prep', '3. Prep. de Pagos'),
-                  icon: CreditCard,
-                },
-                {
-                  id: 'payroll',
-                  label: t('4. W-2 Payroll Prep', '4. Prep. de Nómina W-2'),
-                  icon: Clock,
-                },
-                {
-                  id: 'assistant',
-                  label: t('Ingest & Draft Studio', 'Ingesta y Borradores IA'),
-                  icon: Sparkles,
-                },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const active = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as ActiveTab)}
-                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
-                      active
-                        ? 'bg-stone-900 text-white shadow-sm'
-                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </nav>
+            </div>
           </div>
+
+          {/* Bottom Row: Swipeable Mobile-Friendly Navigation Pills */}
+          <nav className="flex flex-nowrap lg:flex-wrap overflow-x-auto no-scrollbar gap-1.5 bg-stone-100 p-1.5 rounded-xl border border-stone-200">
+            {[
+              {
+                id: 'overview',
+                label: t('5. Logs, Reminders & EOD', '5. Registros, Recordatorios y Cierre'),
+                icon: ClipboardCheck,
+              },
+              {
+                id: 'procurement',
+                label: t('1. Procurement & Mafer', '1. Compras y Mafer'),
+                icon: Truck,
+              },
+              {
+                id: 'houzz',
+                label: t('2. Houzz & Budgets', '2. Houzz y Presupuestos'),
+                icon: FileSpreadsheet,
+              },
+              {
+                id: 'payments',
+                label: t('3. Vendor Payment Prep', '3. Prep. de Pagos'),
+                icon: CreditCard,
+              },
+              {
+                id: 'payroll',
+                label: t('4. W-2 Payroll Prep', '4. Prep. de Nómina W-2'),
+                icon: Clock,
+              },
+              {
+                id: 'assistant',
+                label: t('Ingest & Draft Studio', 'Ingesta y Borradores IA'),
+                icon: Sparkles,
+              },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as ActiveTab)}
+                  className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    active
+                      ? 'bg-stone-900 text-white shadow-sm'
+                      : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </header>
 
@@ -1143,7 +1692,7 @@ export default function DivineDashboard() {
       )}
 
       {/* Main Content Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-24 sm:pb-10 space-y-5 sm:space-y-6">
         {/* Live GitHub Update Available Banner (Triggered Automatically When GitHub Version Changes) */}
         {remoteVersionInfo?.hasNewerVersion &&
           dismissedUpdateBannerVer !== remoteVersionInfo.version && (
@@ -1370,7 +1919,7 @@ export default function DivineDashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               {/* Left 7 Columns: Main Divine AI Interactive Chat Assistant */}
               <div className="lg:col-span-7 bg-white rounded-2xl border-2 border-stone-900/15 shadow-md flex flex-col h-[520px] overflow-hidden">
-                <div className="p-4 border-b border-stone-800 bg-stone-900 text-white flex items-center justify-between">
+                <div className="p-4 border-b border-stone-800 bg-stone-900 text-white flex items-center justify-between gap-2">
                   <div className="flex items-center gap-3">
                     <img
                       src="/divine-logo.png"
@@ -1395,6 +1944,26 @@ export default function DivineDashboard() {
                       </p>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSettingsDropdown(true)}
+                    title={t(
+                      'Configure Chat & General AI API Keys in Settings',
+                      'Configurar Claves API de Chat e IA General en Ajustes'
+                    )}
+                    className={`shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition ${
+                      hasActiveChatKey
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40 hover:bg-emerald-500/30'
+                        : 'bg-amber-400 text-stone-950 border-amber-300 hover:bg-amber-300'
+                    }`}
+                  >
+                    <Key className="w-3.5 h-3.5" />
+                    <span>
+                      {hasActiveChatKey
+                        ? t('Chat AI Key Active', 'Clave Chat Activa')
+                        : t('Set Chat API Key', 'Configurar Clave API')}
+                    </span>
+                  </button>
                 </div>
 
                 {/* One-Click Prompt Bar */}
@@ -1467,7 +2036,7 @@ export default function DivineDashboard() {
                 {/* Chat Input Bar with Direct PDF / File Upload Button */}
                 <form
                   onSubmit={handleChatSubmit}
-                  className="p-3 bg-white border-t border-stone-200 flex items-center gap-2"
+                  className="p-2.5 sm:p-3 bg-white border-t border-stone-200 flex items-center gap-1.5 sm:gap-2"
                 >
                   <button
                     type="button"
@@ -1476,38 +2045,40 @@ export default function DivineDashboard() {
                       'Upload PDF, CSV, Excel, or Image directly to Divine',
                       'Subir PDF, CSV, Excel o Imagen directamente a Divine'
                     )}
-                    className="px-3 py-2.5 rounded-xl border border-amber-400 bg-amber-50 text-stone-900 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1.5 shrink-0 shadow-sm"
+                    className="px-2.5 sm:px-3 py-2.5 rounded-xl border border-amber-400 bg-amber-50 text-stone-900 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1 sm:gap-1.5 shrink-0 shadow-sm"
                   >
-                    <Paperclip className="w-3.5 h-3.5 text-amber-800" />
-                    {t('Upload PDF / File', 'Subir PDF / Archivo')}
+                    <Paperclip className="w-3.5 h-3.5 text-amber-800 shrink-0" />
+                    <span className="hidden sm:inline">{t('Upload PDF / File', 'Subir PDF / Archivo')}</span>
+                    <span className="sm:hidden">{t('PDF', 'PDF')}</span>
                   </button>
                   <input
                     type="text"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     placeholder={t(
-                      'Message Divine (e.g., "Compare Arteriors invoice with PO", "How do I merge POs in Houzz?")...',
-                      'Escriba a Divine (ej. "Comparar factura de Arteriors con PO", "¿Cómo fusionar POs en Houzz?")...'
+                      'Message Divine (e.g., "Compare Arteriors invoice with PO")...',
+                      'Escriba a Divine (ej. "Comparar factura de Arteriors con PO")...'
                     )}
-                    className="flex-1 rounded-xl border border-stone-300 px-3.5 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-stone-900"
+                    className="min-w-0 flex-1 rounded-xl border border-stone-300 px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-stone-900"
                   />
                   <button
                     type="submit"
-                    className="px-4 py-2.5 rounded-xl bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 inline-flex items-center gap-1.5 shadow-sm shrink-0"
+                    className="px-3 sm:px-4 py-2.5 rounded-xl bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 inline-flex items-center gap-1.5 shadow-sm shrink-0"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    {t('Ask Divine', 'Preguntar a Divine')}
+                    <Send className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden sm:inline">{t('Ask Divine', 'Preguntar a Divine')}</span>
+                    <span className="sm:hidden">{t('Ask', 'Enviar')}</span>
                   </button>
                 </form>
               </div>
 
               {/* Right 5 Columns: Quick Source Document Upload (PDF / CSV / Image) & Paste Queue */}
               <div className="lg:col-span-5 flex flex-col justify-between gap-4">
-                <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5 space-y-3 flex-1 flex flex-col justify-between">
+                <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-3.5 sm:p-5 space-y-3 flex-1 flex flex-col justify-between">
                   <div className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-                        <Upload className="w-4 h-4 text-amber-700" />
+                        <Upload className="w-4 h-4 text-amber-700 shrink-0" />
                         {t(
                           'Source Document Upload & Paste (PDF, CSV, XLSX, Images)',
                           'Subir o Pegar Documento Fuente (PDF, CSV, XLSX, Imágenes)'
@@ -1548,11 +2119,11 @@ export default function DivineDashboard() {
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto shrink-0">
                         <select
                           value={selectedDocCategory}
                           onChange={(e) => setSelectedDocCategory(e.target.value)}
-                          className="rounded-lg border border-stone-300 bg-white px-2 py-2 text-[11px] font-medium text-stone-800 focus:outline-none"
+                          className="flex-1 sm:flex-initial rounded-lg border border-stone-300 bg-white px-2 py-2 text-[11px] font-medium text-stone-800 focus:outline-none"
                         >
                           <option value="Auto-Detect">{t('Auto-Detect Type', 'Auto-Detectar Tipo')}</option>
                           <option value="Vendor Quote (PDF)">{t('Vendor Quote', 'Cotización Proveedor')}</option>
@@ -1621,11 +2192,33 @@ export default function DivineDashboard() {
                       className="w-full rounded-xl border border-stone-300 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-stone-900"
                     />
                   </div>
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[11px] text-stone-500">
-                      {t('100% Local & Air-Gapped', '100% Local y Aislado')}
-                    </span>
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowSettingsDropdown(true)}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 ${
+                        hasActiveGeneralKey
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                          : 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100'
+                      }`}
+                    >
+                      <Key className="w-3 h-3" />
+                      {hasActiveGeneralKey
+                        ? t('General AI Key Active', 'Clave IA General Activa')
+                        : t('Set General AI Key', 'Configurar Clave IA General')}
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={isAiGeneralLoading}
+                        onClick={handleRunGeneralAiDraftAnalysis}
+                        className="px-3 py-2 rounded-xl border border-amber-400 bg-amber-50 text-stone-900 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                        {isAiGeneralLoading
+                          ? t('AI Analyzing...', 'Analizando con IA...')
+                          : t('AI Audit & Draft', 'Auditoría y Borrador IA')}
+                      </button>
                       <button
                         onClick={() => setActiveTab('assistant')}
                         className="px-3 py-2 rounded-xl border border-stone-300 text-stone-700 text-xs font-semibold hover:bg-stone-100"
@@ -1633,10 +2226,13 @@ export default function DivineDashboard() {
                         {t('View All Drafts', 'Ver Borradores')} ({drafts.length})
                       </button>
                       <button
+                        disabled={isAiGeneralLoading}
                         onClick={handleIngestSource}
-                        className="px-3.5 py-2 rounded-xl bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800"
+                        className="px-3.5 py-2 rounded-xl bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 disabled:opacity-50"
                       >
-                        {t('Analyze Pasted Text', 'Analizar Texto Pegado')}
+                        {isAiGeneralLoading
+                          ? t('Parsing...', 'Analizando...')
+                          : t('Analyze Pasted Text', 'Analizar Texto Pegado')}
                       </button>
                     </div>
                   </div>
@@ -3135,11 +3731,11 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto shrink-0">
                     <select
                       value={selectedDocCategory}
                       onChange={(e) => setSelectedDocCategory(e.target.value)}
-                      className="rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-xs font-medium text-stone-800 focus:outline-none"
+                      className="flex-1 sm:flex-initial rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-xs font-medium text-stone-800 focus:outline-none"
                     >
                       <option value="Auto-Detect">{t('Auto-Detect Type', 'Auto-Detectar Tipo')}</option>
                       <option value="Vendor Quote (PDF)">{t('Vendor Quote', 'Cotización Proveedor')}</option>
@@ -3155,7 +3751,7 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                       onClick={() => fileInputRef.current?.click()}
                       className="px-4 py-2 rounded-xl bg-amber-500 text-stone-950 text-xs font-bold hover:bg-amber-400 inline-flex items-center gap-1.5 shadow-sm"
                     >
-                      <Upload className="w-4 h-4" />
+                      <Upload className="w-4 h-4 shrink-0" />
                       {t('Upload PDF / File', 'Subir PDF / Archivo')}
                     </button>
                   </div>
@@ -3222,19 +3818,43 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                   )}
                   className="w-full rounded-lg border border-stone-300 p-3 text-xs focus:outline-none focus:ring-2 focus:ring-stone-900"
                 />
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-stone-500">
-                    {t(
-                      'Air-Gap Guarantee: Ingested files and text stay local and only generate unverified drafts for review.',
-                      'Garantía Air-Gap: Los archivos y textos quedan locales y solo generan borradores para revisión.'
-                    )}
-                  </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <button
-                    onClick={handleIngestSource}
-                    className="px-3.5 py-1.5 rounded-lg bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800"
+                    type="button"
+                    onClick={() => setShowSettingsDropdown(true)}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 ${
+                      hasActiveGeneralKey
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                        : 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100'
+                    }`}
                   >
-                    {t('Parse Text into Unverified Draft', 'Analizar Texto en Borrador')}
+                    <Key className="w-3 h-3" />
+                    {hasActiveGeneralKey
+                      ? t('General AI Key Active', 'Clave IA General Activa')
+                      : t('Set General AI Key in Settings', 'Configurar Clave IA General en Ajustes')}
                   </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isAiGeneralLoading}
+                      onClick={handleRunGeneralAiDraftAnalysis}
+                      className="px-3 py-1.5 rounded-lg border border-amber-400 bg-amber-50 text-stone-900 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                      {isAiGeneralLoading
+                        ? t('AI Analyzing...', 'Analizando con IA...')
+                        : t('Generate AI Discrepancy Draft', 'Generar Borrador de Discrepancias IA')}
+                    </button>
+                    <button
+                      disabled={isAiGeneralLoading}
+                      onClick={handleIngestSource}
+                      className="px-3.5 py-1.5 rounded-lg bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 disabled:opacity-50"
+                    >
+                      {isAiGeneralLoading
+                        ? t('Parsing...', 'Analizando...')
+                        : t('Parse Text into Unverified Draft', 'Analizar Texto en Borrador')}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -3308,19 +3928,19 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
 
             {/* Right 5 Columns: Guardrailed Divine AI Chat Assistant */}
             <div className="lg:col-span-5">
-              <div className="bg-white rounded-xl border border-stone-200 shadow-sm flex flex-col h-[680px]">
-                <div className="p-4 border-b border-stone-200 bg-stone-900 text-white rounded-t-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
+              <div className="bg-white rounded-xl border border-stone-200 shadow-sm flex flex-col h-[520px] sm:h-[680px]">
+                <div className="p-3.5 sm:p-4 border-b border-stone-200 bg-stone-900 text-white rounded-t-xl flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <img
                       src="/divine-logo.png"
                       alt="Divine Icon"
                       className="w-7 h-7 rounded-lg object-cover border border-amber-400/40 shrink-0"
                     />
-                    <div>
-                      <h3 className="text-xs font-bold">
+                    <div className="min-w-0">
+                      <h3 className="text-xs font-bold truncate">
                         {t('Divine AI Workspace Assistant', 'Asistente IA Divine del Estudio')}
                       </h3>
-                      <p className="text-[11px] text-stone-300">
+                      <p className="text-[11px] text-stone-300 truncate">
                         {t(
                           'Hard-wired with Sixth Sense Studio Firm Limits',
                           'Programado con los Límites Estrictos de Sixth Sense Studio'
@@ -3328,13 +3948,24 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                       </p>
                     </div>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30 font-semibold">
-                    {t('Air-Gapped', 'Aislado (Air-Gap)')}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSettingsDropdown(true)}
+                    className={`shrink-0 text-[10px] px-2.5 py-1 rounded-lg border font-bold inline-flex items-center gap-1 transition ${
+                      hasActiveChatKey
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                        : 'bg-amber-400 text-stone-950 border-amber-300 hover:bg-amber-300'
+                    }`}
+                  >
+                    <Key className="w-3 h-3 shrink-0" />
+                    {hasActiveChatKey
+                      ? t('Chat AI Key Active', 'Clave Chat Activa')
+                      : t('Set Chat API Key', 'Clave API Chat')}
+                  </button>
                 </div>
 
                 {/* Quick Test Prompts to verify guardrails & Houzz Pro knowledge */}
-                <div className="px-4 py-2.5 bg-stone-100 border-b border-stone-200 flex flex-wrap gap-1.5">
+                <div className="px-3.5 sm:px-4 py-2.5 bg-stone-100 border-b border-stone-200 flex flex-wrap gap-1.5">
                   <button
                     onClick={() =>
                       setChatInput('How do I merge Purchase Orders or update the Selections Tracker in Houzz Pro?')
@@ -3370,14 +4001,14 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
+                <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto space-y-3 text-xs">
                   {chatHistory.map((msg, i) => (
                     <div
                       key={i}
                       className={`p-3 rounded-xl ${
                         msg.role === 'user'
-                          ? 'bg-stone-900 text-white ml-8'
-                          : 'bg-stone-100 text-stone-900 mr-4 border border-stone-200'
+                          ? 'bg-stone-900 text-white ml-6 sm:ml-8'
+                          : 'bg-stone-100 text-stone-900 mr-3 sm:mr-4 border border-stone-200'
                       }`}
                     >
                       {msg.statusBanner && (
@@ -3393,7 +4024,7 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                 {/* Chat Input */}
                 <form
                   onSubmit={handleChatSubmit}
-                  className="p-3 border-t border-stone-200 flex items-center gap-2"
+                  className="p-2.5 sm:p-3 border-t border-stone-200 flex items-center gap-1.5 sm:gap-2"
                 >
                   <button
                     type="button"
@@ -3404,8 +4035,9 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                     )}
                     className="px-2.5 py-2 rounded-lg border border-amber-400 bg-amber-50 text-stone-900 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1 shrink-0"
                   >
-                    <Paperclip className="w-3.5 h-3.5 text-amber-800" />
-                    {t('Upload PDF', 'Subir PDF')}
+                    <Paperclip className="w-3.5 h-3.5 text-amber-800 shrink-0" />
+                    <span className="hidden sm:inline">{t('Upload PDF', 'Subir PDF')}</span>
+                    <span className="sm:hidden">{t('PDF', 'PDF')}</span>
                   </button>
                   <input
                     type="text"
@@ -3415,13 +4047,13 @@ Hi Meliza, once I confirm the two timesheet notes above and review the QuickBook
                       'Ask Divine to prepare a draft, compare a quote, or test firm limits...',
                       'Pida a Divine preparar un borrador, comparar una cotización o probar límites...'
                     )}
-                    className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-stone-900"
+                    className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-stone-900"
                   />
                   <button
                     type="submit"
-                    className="px-3.5 py-2 rounded-lg bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 inline-flex items-center gap-1 shrink-0"
+                    className="px-3 sm:px-3.5 py-2 rounded-lg bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 inline-flex items-center gap-1 shrink-0"
                   >
-                    <Send className="w-3.5 h-3.5" /> {t('Ask', 'Preguntar')}
+                    <Send className="w-3.5 h-3.5 shrink-0" /> {t('Ask', 'Preguntar')}
                   </button>
                 </form>
               </div>
